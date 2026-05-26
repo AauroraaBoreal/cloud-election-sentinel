@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import Optional, Tuple
+import unicodedata
 
 import numpy as np
 import pandas as pd
@@ -157,6 +158,34 @@ LOCATIONS_DEMO = pd.DataFrame(
         (8, "Huancavelica", "Huancavelica", "Huancavelica", -12.7864, -74.9764, 3200, 3200, 0, 0, 82.0),
         (9, "Amazonas", "Chachapoyas", "Chachapoyas", -6.2317, -77.8690, 2410, 2410, 0, 0, 76.0),
         (10, "Ucayali", "Coronel Portillo", "Callería", -8.3791, -74.5539, 6873, 6873, 0, 0, 88.0),
+    ],
+    columns=[
+        "location_id",
+        "region",
+        "province",
+        "district",
+        "latitude",
+        "longitude",
+        "total_actas",
+        "actas_contabilizadas",
+        "actas_pendientes",
+        "actas_observadas",
+        "velocidad_actas_hora",
+    ],
+)
+
+LOCATIONS_DEMO = pd.DataFrame(
+    [
+        (1, "Lima Metropolitana", "Lima", "Lima", -12.0464, -77.0428, 30140, 24610, 5530, 215, 1025.4),
+        (2, "La Libertad", "Trujillo", "Trujillo", -8.1116, -79.0288, 7900, 6125, 1775, 68, 255.2),
+        (3, "Piura", "Piura", "Piura", -5.1945, -80.6328, 6700, 4925, 1775, 74, 205.2),
+        (4, "Arequipa", "Arequipa", "Arequipa", -16.4090, -71.5375, 7600, 6420, 1180, 58, 267.5),
+        (5, "Cajamarca", "Cajamarca", "Cajamarca", -7.1617, -78.5128, 5900, 3920, 1980, 92, 163.3),
+        (6, "Cusco", "Cusco", "Cusco", -13.5319, -71.9675, 5200, 3650, 1550, 80, 152.1),
+        (7, "Junin", "Huancayo", "Huancayo", -12.0651, -75.2049, 5400, 4310, 1090, 47, 179.6),
+        (8, "Lambayeque", "Chiclayo", "Chiclayo", -6.7714, -79.8409, 5000, 4210, 790, 35, 175.4),
+        (9, "Ancash", "Santa", "Chimbote", -9.0745, -78.5936, 5100, 3320, 1780, 83, 138.3),
+        (10, "Puno", "Puno", "Puno", -15.8402, -70.0219, 4800, 2850, 1950, 96, 118.8),
     ],
     columns=[
         "location_id",
@@ -524,6 +553,317 @@ def make_map(locations: pd.DataFrame, metrics: dict) -> go.Figure:
     return fig
 
 
+TOP_ELECTORAL_DEPARTMENTS = [
+    "Lima Metropolitana",
+    "La Libertad",
+    "Piura",
+    "Arequipa",
+    "Cajamarca",
+    "Cusco",
+    "Junin",
+    "Lambayeque",
+    "Ancash",
+    "Puno",
+]
+
+DEPARTMENT_ALIASES = {
+    "lima": "Lima Metropolitana",
+    "lima metropolitana": "Lima Metropolitana",
+    "la libertad": "La Libertad",
+    "piura": "Piura",
+    "arequipa": "Arequipa",
+    "cajamarca": "Cajamarca",
+    "cusco": "Cusco",
+    "junin": "Junin",
+    "lambayeque": "Lambayeque",
+    "ancash": "Ancash",
+    "puno": "Puno",
+}
+
+DEPARTMENT_GEOJSON = {
+    "type": "FeatureCollection",
+    "features": [
+        {"type": "Feature", "id": "Lima Metropolitana", "properties": {"name": "Lima Metropolitana"}, "geometry": {"type": "Polygon", "coordinates": [[[-77.30, -11.55], [-76.65, -11.55], [-76.55, -12.35], [-77.25, -12.50], [-77.50, -12.05], [-77.30, -11.55]]]}},
+        {"type": "Feature", "id": "La Libertad", "properties": {"name": "La Libertad"}, "geometry": {"type": "Polygon", "coordinates": [[[-79.75, -6.80], [-77.25, -6.90], [-77.05, -8.80], [-78.70, -8.95], [-79.65, -8.25], [-79.75, -6.80]]]}},
+        {"type": "Feature", "id": "Piura", "properties": {"name": "Piura"}, "geometry": {"type": "Polygon", "coordinates": [[[-81.25, -3.65], [-79.25, -3.45], [-79.05, -5.60], [-80.60, -6.20], [-81.30, -5.25], [-81.25, -3.65]]]}},
+        {"type": "Feature", "id": "Arequipa", "properties": {"name": "Arequipa"}, "geometry": {"type": "Polygon", "coordinates": [[[-75.20, -14.40], [-70.65, -14.55], [-70.25, -17.70], [-72.20, -17.95], [-74.60, -16.85], [-75.20, -14.40]]]}},
+        {"type": "Feature", "id": "Cajamarca", "properties": {"name": "Cajamarca"}, "geometry": {"type": "Polygon", "coordinates": [[[-79.35, -4.60], [-77.10, -4.65], [-77.05, -7.75], [-78.80, -7.90], [-79.55, -6.35], [-79.35, -4.60]]]}},
+        {"type": "Feature", "id": "Cusco", "properties": {"name": "Cusco"}, "geometry": {"type": "Polygon", "coordinates": [[[-73.95, -11.05], [-70.15, -11.10], [-69.70, -14.85], [-72.00, -15.15], [-73.90, -13.75], [-73.95, -11.05]]]}},
+        {"type": "Feature", "id": "Junin", "properties": {"name": "Junin"}, "geometry": {"type": "Polygon", "coordinates": [[[-76.40, -10.50], [-73.35, -10.65], [-73.15, -12.95], [-75.30, -13.35], [-76.55, -12.10], [-76.40, -10.50]]]}},
+        {"type": "Feature", "id": "Lambayeque", "properties": {"name": "Lambayeque"}, "geometry": {"type": "Polygon", "coordinates": [[[-80.75, -5.45], [-79.15, -5.55], [-79.05, -7.10], [-80.10, -7.20], [-80.70, -6.55], [-80.75, -5.45]]]}},
+        {"type": "Feature", "id": "Ancash", "properties": {"name": "Ancash"}, "geometry": {"type": "Polygon", "coordinates": [[[-78.95, -8.10], [-76.65, -8.15], [-76.45, -10.65], [-77.75, -10.90], [-78.95, -9.95], [-78.95, -8.10]]]}},
+        {"type": "Feature", "id": "Puno", "properties": {"name": "Puno"}, "geometry": {"type": "Polygon", "coordinates": [[[-71.85, -13.00], [-68.70, -13.15], [-68.45, -17.30], [-70.20, -17.55], [-71.75, -16.05], [-71.85, -13.00]]]}},
+    ],
+}
+
+
+def _clean_department(value: object) -> str:
+    text = "" if pd.isna(value) else str(value).strip()
+    normalized = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii").lower()
+    return DEPARTMENT_ALIASES.get(normalized, text)
+
+
+def _elapsed_hours(locations: pd.DataFrame) -> float:
+    for column in ("tiempo_transcurrido_horas", "horas_transcurridas", "elapsed_hours"):
+        if column in locations.columns and pd.to_numeric(locations[column], errors="coerce").notna().any():
+            return max(float(pd.to_numeric(locations[column], errors="coerce").median()), 1.0)
+
+    start_columns = [c for c in ("fecha_inicio_conteo", "started_at", "created_at") if c in locations.columns]
+    end_columns = [c for c in ("fecha_actualizacion", "updated_at", "processed_at") if c in locations.columns]
+    if start_columns:
+        start = pd.to_datetime(locations[start_columns[0]], errors="coerce").min()
+        end = pd.to_datetime(locations[end_columns[0]], errors="coerce").max() if end_columns else datetime.now()
+        if pd.notna(start) and pd.notna(end):
+            return max((end - start).total_seconds() / 3600, 1.0)
+
+    if "velocidad_actas_hora" in locations.columns:
+        speed = pd.to_numeric(locations["velocidad_actas_hora"], errors="coerce").replace(0, np.nan)
+        counted = pd.to_numeric(locations["actas_contabilizadas"], errors="coerce")
+        elapsed = (counted / speed).replace([np.inf, -np.inf], np.nan).median()
+        if pd.notna(elapsed):
+            return max(float(elapsed), 1.0)
+
+    return 24.0
+
+
+def _top_vote_labels(locations: pd.DataFrame, candidates: pd.DataFrame | None, votes: pd.DataFrame | None) -> pd.DataFrame:
+    if candidates is None or votes is None or candidates.empty or votes.empty:
+        return pd.DataFrame(columns=["region_map", "votos_principales"])
+
+    vote_df = votes.merge(locations[["location_id", "region_map"]], on="location_id", how="inner")
+    vote_df = vote_df.merge(candidates[["candidate_id", "candidate_name", "party_name"]], on="candidate_id", how="left")
+    grouped = (
+        vote_df.groupby(["region_map", "candidate_name", "party_name"], as_index=False)["valid_votes"]
+        .sum()
+        .sort_values(["region_map", "valid_votes"], ascending=[True, False])
+    )
+
+    labels = []
+    for region, group in grouped.groupby("region_map"):
+        top = group.head(2)
+        label = "<br>".join(
+            f"{row['candidate_name']} ({row['party_name']}): {format_int(row['valid_votes'])}"
+            for _, row in top.iterrows()
+        )
+        labels.append({"region_map": region, "votos_principales": label})
+    return pd.DataFrame(labels)
+
+
+def prepare_mapa_dataframe(
+    locations: pd.DataFrame, candidates: pd.DataFrame | None = None, votes: pd.DataFrame | None = None
+) -> pd.DataFrame:
+    df = locations.copy()
+    df["region_map"] = df["region"].map(_clean_department)
+    df = df[df["region_map"].isin(TOP_ELECTORAL_DEPARTMENTS)].copy()
+    if df.empty:
+        return df
+
+    elapsed_hours = _elapsed_hours(df)
+    grouped = (
+        df.groupby("region_map", as_index=False)
+        .agg(
+            total_actas=("total_actas", "sum"),
+            actas_contabilizadas=("actas_contabilizadas", "sum"),
+            actas_pendientes=("actas_pendientes", "sum"),
+            actas_observadas=("actas_observadas", "sum"),
+            latitude=("latitude", "mean"),
+            longitude=("longitude", "mean"),
+        )
+    )
+    grouped["avance_pct"] = np.where(
+        grouped["total_actas"] > 0, grouped["actas_contabilizadas"] / grouped["total_actas"] * 100, 0
+    )
+    grouped["velocidad_actas_hora"] = grouped["actas_contabilizadas"] / elapsed_hours
+    grouped["pendiente_pct"] = np.where(
+        grouped["total_actas"] > 0, grouped["actas_pendientes"] / grouped["total_actas"] * 100, 0
+    )
+    avg_progress = float(grouped["avance_pct"].mean())
+    avg_speed = float(grouped["velocidad_actas_hora"].mean())
+    high_pending = float(grouped["pendiente_pct"].quantile(0.70))
+    grouped["bajo_promedio"] = grouped["avance_pct"] < avg_progress
+    grouped["menor_rendimiento"] = grouped["velocidad_actas_hora"] < avg_speed
+    grouped["alta_pendiente"] = grouped["pendiente_pct"] >= high_pending
+    grouped["anomalia_score"] = np.where(grouped["bajo_promedio"] | grouped["menor_rendimiento"], 1, 0)
+    grouped["estado_analitico"] = np.select(
+        [grouped["alta_pendiente"], grouped["bajo_promedio"] | grouped["menor_rendimiento"]],
+        ["Alta carga pendiente", "Bajo el promedio"],
+        default="Rendimiento esperado",
+    )
+
+    vote_labels = _top_vote_labels(df[["location_id", "region_map"]], candidates, votes)
+    grouped = grouped.merge(vote_labels, on="region_map", how="left")
+    grouped["votos_principales"] = grouped["votos_principales"].fillna("Sin votos disponibles")
+    grouped["region_map"] = pd.Categorical(grouped["region_map"], TOP_ELECTORAL_DEPARTMENTS, ordered=True)
+    return grouped.sort_values("region_map").reset_index(drop=True)
+
+
+def make_choropleth_map(map_df: pd.DataFrame, metric: str) -> go.Figure:
+    metric_config = {
+        "% de avance": ("avance_pct", "% avance", [[0, "#F05A5A"], [0.5, "#F4C64E"], [1, "#2E8B57"]], [0, 100]),
+        "Velocidad de procesamiento": ("velocidad_actas_hora", "Actas/hora", "Blues", None),
+        "Anomalias": ("anomalia_score", "Anomalia", [[0, "#D9F0DD"], [0.49, "#D9F0DD"], [0.5, "#F4A3A3"], [1, "#F05A5A"]], [0, 1]),
+    }
+    column, title, colorscale, value_range = metric_config[metric]
+    zmin, zmax = value_range if value_range else (None, None)
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Choroplethmapbox(
+            geojson=DEPARTMENT_GEOJSON,
+            locations=map_df["region_map"].astype(str),
+            z=map_df[column],
+            featureidkey="id",
+            colorscale=colorscale,
+            zmin=zmin,
+            zmax=zmax,
+            marker_line_width=1.0,
+            marker_line_color="#FFFFFF",
+            colorbar=dict(title=title, thickness=14, len=0.72),
+            customdata=np.stack(
+                [
+                    map_df["region_map"].astype(str),
+                    map_df["avance_pct"],
+                    map_df["velocidad_actas_hora"],
+                    map_df["actas_pendientes"],
+                    map_df["pendiente_pct"],
+                    map_df["estado_analitico"],
+                    map_df["votos_principales"],
+                ],
+                axis=-1,
+            ),
+            hovertemplate=(
+                "<b>%{customdata[0]}</b><br>"
+                "Avance: %{customdata[1]:.1f}%<br>"
+                "Velocidad: %{customdata[2]:,.1f} actas/hora<br>"
+                "Pendientes: %{customdata[3]:,} (%{customdata[4]:.1f}%)<br>"
+                "Estado: %{customdata[5]}<br><br>"
+                "<b>Votos principales</b><br>%{customdata[6]}"
+                "<extra></extra>"
+            ),
+        )
+    )
+
+    anomaly_df = map_df[map_df["bajo_promedio"] | map_df["menor_rendimiento"]]
+    if not anomaly_df.empty:
+        fig.add_trace(
+            go.Choroplethmapbox(
+                geojson=DEPARTMENT_GEOJSON,
+                locations=anomaly_df["region_map"].astype(str),
+                z=np.zeros(len(anomaly_df)),
+                featureidkey="id",
+                colorscale=[[0, "rgba(0,0,0,0)"], [1, "rgba(0,0,0,0)"]],
+                showscale=False,
+                marker_line_width=3.2,
+                marker_line_color="#B91C1C",
+                hoverinfo="skip",
+            )
+        )
+
+    fig.add_trace(
+        go.Scattermapbox(
+            lat=map_df["latitude"],
+            lon=map_df["longitude"],
+            mode="markers+text",
+            marker=dict(size=8, color="#111827"),
+            text=map_df["region_map"].astype(str),
+            textfont=dict(size=10, color="#111827"),
+            textposition="top center",
+            hoverinfo="skip",
+            showlegend=False,
+        )
+    )
+    fig.update_layout(
+        height=560,
+        mapbox=dict(style="carto-positron", center={"lat": -10.5, "lon": -75.1}, zoom=4.15),
+        margin=dict(l=0, r=0, t=0, b=0),
+        paper_bgcolor="white",
+        font=dict(color=TEXT_DARK),
+        showlegend=False,
+    )
+    return fig
+
+
+def render_mapa(locations: pd.DataFrame, candidates: pd.DataFrame | None = None, votes: pd.DataFrame | None = None) -> pd.DataFrame:
+    map_df = prepare_mapa_dataframe(locations, candidates, votes)
+    if map_df.empty:
+        st.warning("No hay datos para los 10 departamentos de mayor carga electoral.")
+        return map_df
+
+    metric = st.radio(
+        "Metrica del mapa",
+        ["% de avance", "Velocidad de procesamiento", "Anomalias"],
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+    fig = make_choropleth_map(map_df, metric)
+
+    try:
+        selection = st.plotly_chart(
+            fig,
+            use_container_width=True,
+            on_select="rerun",
+            selection_mode="points",
+            key="mapa_departamental",
+        )
+    except TypeError:
+        selection = None
+        st.plotly_chart(fig, use_container_width=True)
+
+    selected_region = None
+    selection_payload = {}
+    if selection:
+        selection_payload = selection.get("selection", {}) if hasattr(selection, "get") else getattr(selection, "selection", {})
+    if selection_payload and selection_payload.get("points"):
+        point = selection_payload["points"][0]
+        selected_region = point.get("location")
+        if not selected_region and point.get("customdata"):
+            selected_region = point["customdata"][0]
+    if selected_region is None:
+        selected_region = st.selectbox("Detalle territorial", map_df["region_map"].astype(str).tolist())
+
+    st.session_state["mapa_departamentos_what_if"] = map_df[
+        [
+            "region_map",
+            "total_actas",
+            "actas_contabilizadas",
+            "actas_pendientes",
+            "avance_pct",
+            "pendiente_pct",
+            "velocidad_actas_hora",
+            "bajo_promedio",
+            "menor_rendimiento",
+            "alta_pendiente",
+        ]
+    ].copy()
+    st.session_state["mapa_departamentos_prioritarios"] = map_df[map_df["alta_pendiente"]]["region_map"].astype(str).tolist()
+
+    detail = locations.copy()
+    detail["region_map"] = detail["region"].map(_clean_department)
+    detail = detail[detail["region_map"].astype(str) == str(selected_region)]
+    st.markdown(f"#### Detalle: {selected_region}")
+    if {"province", "district"}.issubset(detail.columns) and not detail.empty:
+        detail_table = (
+            detail.groupby(["province", "district"], as_index=False)
+            .agg(
+                total_actas=("total_actas", "sum"),
+                actas_contabilizadas=("actas_contabilizadas", "sum"),
+                actas_pendientes=("actas_pendientes", "sum"),
+            )
+            .sort_values("actas_pendientes", ascending=False)
+        )
+        detail_table["avance_pct"] = np.where(
+            detail_table["total_actas"] > 0,
+            detail_table["actas_contabilizadas"] / detail_table["total_actas"] * 100,
+            0,
+        )
+        detail_table.columns = ["Provincia", "Distrito", "Actas totales", "Procesadas", "Pendientes", "% avance"]
+        st.dataframe(detail_table, use_container_width=True, hide_index=True)
+    else:
+        st.info("El dataset actual no incluye detalle de provincia o distrito para esta seleccion.")
+
+    return map_df
+
+
 def page_resumen(candidates, locations, votes):
     filtered_locations = apply_filters(locations)
     data = joined_results(candidates, filtered_locations, votes)
@@ -598,6 +938,44 @@ def page_resultados(candidates, locations, votes):
 
 
 def page_mapa(locations, candidates, votes):
+    st.markdown("## Analisis territorial del conteo")
+    st.caption("Mapa coropletico de los 10 departamentos con mayor carga electoral")
+
+    map_df = render_mapa(locations, candidates, votes)
+    if map_df.empty:
+        return
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Avance promedio", f"{map_df['avance_pct'].mean():.1f}%")
+    c2.metric("Velocidad total", f"{map_df['velocidad_actas_hora'].sum():,.0f}", "actas/hora")
+    c3.metric("Bajo promedio", str(int(map_df["anomalia_score"].sum())))
+    c4.metric("Alta pendiente", str(int(map_df["alta_pendiente"].sum())))
+
+    left, right = st.columns([1.15, 1])
+    with left:
+        st.markdown("### Departamentos con menor rendimiento")
+        risk = map_df[map_df["bajo_promedio"] | map_df["menor_rendimiento"]].copy()
+        if risk.empty:
+            st.success("No hay departamentos bajo el promedio actual.")
+        else:
+            risk["brecha_avance"] = (map_df["avance_pct"].mean() - risk["avance_pct"]).clip(lower=0)
+            risk_table = risk[
+                ["region_map", "avance_pct", "velocidad_actas_hora", "pendiente_pct", "brecha_avance", "estado_analitico"]
+            ].sort_values(["brecha_avance", "pendiente_pct"], ascending=False)
+            risk_table.columns = ["Departamento", "% avance", "Actas/hora", "% pendiente", "Brecha avance", "Estado"]
+            st.dataframe(risk_table, use_container_width=True, hide_index=True)
+
+    with right:
+        st.markdown("### Insumos para simulacion")
+        what_if = map_df[map_df["alta_pendiente"]].copy()
+        if what_if.empty:
+            st.info("No hay departamentos con carga pendiente alta en el corte actual.")
+        else:
+            what_if_table = what_if[["region_map", "actas_pendientes", "pendiente_pct", "velocidad_actas_hora"]]
+            what_if_table.columns = ["Departamento", "Actas pendientes", "% pendiente", "Actas/hora"]
+            st.dataframe(what_if_table, use_container_width=True, hide_index=True)
+    return
+
     data = joined_results(candidates, locations, votes)
     summary = candidate_summary(data)
     metrics = general_metrics(locations, summary)
