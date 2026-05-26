@@ -1,0 +1,74 @@
+# ===============================
+# Python
+# ===============================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# Entornos virtuales
+venv/
+env/
+.venv/
+ENV/
+
+# ===============================
+# Streamlit
+# ===============================
+.streamlit/secrets.toml
+
+# Permitir ejemplo de secrets
+!.streamlit/secrets.toml.example
+
+# ===============================
+# Credenciales y variables locales
+# ===============================
+secrets.toml
+.env
+.env.local
+.env.production
+*.pem
+*.key
+*.crt
+
+# ===============================
+# Jupyter / Databricks
+# ===============================
+.ipynb_checkpoints/
+.databricks/
+*.dbc
+
+# ===============================
+# Archivos temporales
+# ===============================
+.DS_Store
+Thumbs.db
+*.log
+logs/
+tmp/
+temp/
+
+# ===============================
+# Data local pesada o de prueba
+# ===============================
+data/
+datasets/
+exports/
+*.sqlite
+*.db
+
+# ===============================
+# IDEs
+# ===============================
+.vscode/
+.idea/
+
+# ===============================
+# Build / cache
+# ===============================
+dist/
+build/
+*.egg-info/
+.cache/
+.pytest_cache/
