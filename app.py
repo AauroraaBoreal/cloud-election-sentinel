@@ -11,6 +11,11 @@ import plotly.graph_objects as go
 import streamlit as st
 
 try:
+    from streamlit_autorefresh import st_autorefresh
+except Exception:
+    st_autorefresh = None
+
+try:
     import psycopg2
 except Exception:
     psycopg2 = None
@@ -25,6 +30,10 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# Refresca Streamlit cada 60 segundos para leer cambios de Supabase
+if st_autorefresh is not None:
+    st_autorefresh(interval=60 * 1000, key="auto_refresh_cloud_election")
 
 PRIMARY = "#003C7D"
 SECONDARY = "#0B5CAB"
@@ -258,53 +267,244 @@ def get_connection():
     try:
         if psycopg2 is None:
             return None
+
         postgres = st.secrets["postgres"]
-        return psycopg2.connect(
+
+        conn = psycopg2.connect(
             user=postgres["USER"],
             password=postgres["PASSWORD"],
             host=postgres["HOST"],
             port=postgres.get("PORT", "5432"),
             dbname=postgres.get("DBNAME", "postgres"),
             sslmode="require",
+            connect_timeout=10,
         )
+
+        # Importante para que la conexión cacheada vea los nuevos datos del Job
+        conn.autocommit = True
+
+        return conn
+
     except Exception:
         return None
 
 
 def read_sql(query: str, params: Optional[Tuple] = None) -> Optional[pd.DataFrame]:
     conn = get_connection()
+
     if conn is None:
         return None
+
     try:
         return pd.read_sql_query(query, conn, params=params)
     except Exception:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         return None
 
 
 def insert_log(event_type: str, event_name: str, detail: str) -> None:
+    """
+    Guarda logs desde Streamlit en la tabla nueva ces_logs.
+    """
     conn = get_connection()
+
     if conn is None:
         return
+
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO event_logs (event_type, event_name, detail)
+                INSERT INTO ces_logs (tipo, evento, detalle)
                 VALUES (%s, %s, %s)
                 """,
                 (event_type, event_name, detail),
             )
-        conn.commit()
     except Exception:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
 
-@st.cache_data(ttl=60, show_spinner=False)
-def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, bool]:
+def load_ces_data() -> Optional[tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]]:
+    """
+    Lee la data que actualiza Databricks:
+    - ces_conteo
+    - ces_logs
+
+    Luego transforma esa data al formato que ya usan:
+    - Resumen
+    - Resultados
+    - Mapa
+    - Reportes
+    - Logs
+    """
+
+    conteo = read_sql(
+        """
+        SELECT
+            id,
+            region,
+            provincia,
+            distrito,
+            actas_total,
+            actas_contabilizadas,
+            actas_pendientes,
+            avance_pct,
+            velocidad_actas_hora,
+            ultimo_ingreso_actas,
+            estado,
+            color_estado,
+            motivo_retraso,
+            detalle_retraso,
+            votos_a,
+            votos_b,
+            votos_c,
+            votos_d,
+            votos_e,
+            updated_at
+        FROM ces_conteo
+        ORDER BY region
+        """
+    )
+
+    if conteo is None or conteo.empty:
+        return None
+
+    # Candidatos conectados a las columnas votos_a, votos_b, votos_c, votos_d, votos_e
+    candidates = pd.DataFrame(
+        [
+            (1, "Candidata A", "Fuerza Popular", "K", "#1F66B1"),
+            (2, "Candidato B", "Juntos por el Perú", "JP", "#2F7CC0"),
+            (3, "Candidato C", "Renovación Popular", "R", "#7DBAE0"),
+            (4, "Candidato D", "Alianza Popular", "AP", "#88C3E8"),
+            (5, "Candidato E", "Acción Popular", "APOP", "#9CCEEB"),
+        ],
+        columns=[
+            "candidate_id",
+            "candidate_name",
+            "party_name",
+            "party_symbol",
+            "display_color",
+        ],
+    )
+
+    coords = {
+        "Lima": (-12.0464, -77.0428),
+        "Arequipa": (-16.4090, -71.5375),
+        "Cusco": (-13.5319, -71.9675),
+        "Puno": (-15.8402, -70.0219),
+        "Huancavelica": (-12.7864, -74.9764),
+        "Ucayali": (-8.3791, -74.5539),
+        "Loreto": (-3.7437, -73.2516),
+    }
+
+    locations = conteo.copy()
+
+    locations["location_id"] = locations["id"]
+    locations["province"] = locations["provincia"]
+    locations["district"] = locations["distrito"]
+    locations["total_actas"] = locations["actas_total"]
+    locations["actas_observadas"] = 0
+    locations["latitude"] = locations["region"].map(lambda x: coords.get(x, (-9.3, -75.1))[0])
+    locations["longitude"] = locations["region"].map(lambda x: coords.get(x, (-9.3, -75.1))[1])
+
+    locations = locations[
+        [
+            "location_id",
+            "region",
+            "province",
+            "district",
+            "latitude",
+            "longitude",
+            "total_actas",
+            "actas_contabilizadas",
+            "actas_pendientes",
+            "actas_observadas",
+            "velocidad_actas_hora",
+            "ultimo_ingreso_actas",
+            "avance_pct",
+            "estado",
+            "color_estado",
+            "motivo_retraso",
+            "detalle_retraso",
+            "updated_at",
+        ]
+    ]
+
+    vote_rows = []
+
+    for _, row in conteo.iterrows():
+        vote_rows.append(
+            {
+                "location_id": int(row["id"]),
+                "candidate_id": 1,
+                "valid_votes": int(row["votos_a"] or 0),
+            }
+        )
+        vote_rows.append(
+            {
+                "location_id": int(row["id"]),
+                "candidate_id": 2,
+                "valid_votes": int(row["votos_b"] or 0),
+            }
+        )
+        vote_rows.append(
+            {
+                "location_id": int(row["id"]),
+                "candidate_id": 3,
+                "valid_votes": int(row["votos_c"] or 0),
+            }
+        )
+        vote_rows.append(
+            {
+                "location_id": int(row["id"]),
+                "candidate_id": 4,
+                "valid_votes": int(row["votos_d"] or 0),
+            }
+        )
+        vote_rows.append(
+            {
+                "location_id": int(row["id"]),
+                "candidate_id": 5,
+                "valid_votes": int(row["votos_e"] or 0),
+            }
+        )
+
+    votes = pd.DataFrame(vote_rows)
+
+    logs = read_sql(
+        """
+        SELECT
+            fecha_hora AS event_time,
+            tipo AS event_type,
+            evento AS event_name,
+            detalle AS detail
+        FROM ces_logs
+        ORDER BY fecha_hora DESC
+        LIMIT 50
+        """
+    )
+
+    if logs is None or logs.empty:
+        logs = LOGS_DEMO.copy()
+
+    return candidates, locations, votes, logs
+
+
+def load_legacy_data() -> Optional[tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]]:
+    """
+    Respaldo por si aún quieres leer las tablas antiguas.
+    Pero la prioridad será ces_conteo.
+    """
     candidates = read_sql("SELECT * FROM candidates ORDER BY candidate_id")
     locations = read_sql("SELECT * FROM locations ORDER BY region, province, district")
     votes = read_sql("SELECT location_id, candidate_id, valid_votes FROM vote_results")
+
     logs = read_sql(
         """
         SELECT event_time, event_type, event_name, detail
@@ -314,13 +514,42 @@ def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame,
         """
     )
 
-    if candidates is None or locations is None or votes is None or candidates.empty or locations.empty or votes.empty:
-        return CANDIDATES_DEMO.copy(), LOCATIONS_DEMO.copy(), build_demo_votes(), LOGS_DEMO.copy(), False
+    if candidates is None or locations is None or votes is None:
+        return None
+
+    if candidates.empty or locations.empty or votes.empty:
+        return None
 
     if logs is None or logs.empty:
         logs = LOGS_DEMO.copy()
 
-    return candidates, locations, votes, logs, True
+    return candidates, locations, votes, logs
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, bool]:
+    # 1. Primero lee la data nueva generada por Databricks
+    ces_data = load_ces_data()
+
+    if ces_data is not None:
+        candidates, locations, votes, logs = ces_data
+        return candidates, locations, votes, logs, True
+
+    # 2. Si no existe ces_conteo, lee las tablas antiguas
+    legacy_data = load_legacy_data()
+
+    if legacy_data is not None:
+        candidates, locations, votes, logs = legacy_data
+        return candidates, locations, votes, logs, True
+
+    # 3. Último respaldo: demo local
+    return (
+        CANDIDATES_DEMO.copy(),
+        LOCATIONS_DEMO.copy(),
+        build_demo_votes(),
+        LOGS_DEMO.copy(),
+        False,
+    )
 
 
 # ==========================================================
@@ -522,17 +751,31 @@ def make_votes_chart(summary: pd.DataFrame) -> go.Figure:
 
 def make_map(locations: pd.DataFrame, metrics: dict) -> go.Figure:
     map_df = locations.copy()
-    threshold = metrics["slow_threshold"]
-    map_df["estado"] = np.where(
-        map_df["velocidad_actas_hora"] < threshold,
-        "Retraso crítico",
-        np.where(map_df["velocidad_actas_hora"] < metrics["avg_speed"], "Avance medio", "Avance alto"),
-    )
+
+    # Si la BD ya trae estado desde Databricks, usamos ese estado.
+    # Si no existe, lo calculamos por velocidad como respaldo.
+    if "estado" not in map_df.columns:
+        threshold = metrics["slow_threshold"]
+        map_df["estado"] = np.where(
+            map_df["velocidad_actas_hora"] < threshold,
+            "Retraso crítico",
+            np.where(
+                map_df["velocidad_actas_hora"] < metrics["avg_speed"],
+                "Avance medio",
+                "Avance alto",
+            ),
+        )
+    else:
+        map_df["estado"] = map_df["estado"].fillna("Sin información")
+
     map_df["avance"] = np.where(
         map_df["total_actas"] > 0,
         map_df["actas_contabilizadas"] / map_df["total_actas"] * 100,
         0,
     )
+
+
+    
     color_map = {
         "Avance alto": "#5DBB73",
         "Avance medio": "#F4C64E",

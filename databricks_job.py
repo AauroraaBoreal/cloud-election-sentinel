@@ -6,26 +6,53 @@
 # SIN IA, SIN pandas, SIN numpy, SIN toml
 # ============================================================
 
+import os
+import argparse
 import random
 from datetime import datetime, timezone
 import psycopg2
 
 
 # ============================================================
-# 1. CREDENCIALES SUPABASE
+# 1. CONFIGURACIÓN SEGURA SUPABASE
 # ============================================================
+# Las credenciales ya NO van escritas en el código.
+# Debes pasarlas desde Databricks en el campo Parameters
+# o como variables de entorno.
+#
 # Si usas POOLER de Supabase, el usuario debe ser:
 # postgres.TU_PROJECT_REF
 
-POSTGRES_USER="postgres.nrtgdkhlyueerektkofu"
-POSTGRES_PASSWORD="!Duquecito2021"
-POSTGRES_HOST="aws-1-us-east-1.pooler.supabase.com"
-POSTGRES_PORT="6543"
-POSTGRES_DBNAME="postgres"
+def get_args():
+    parser = argparse.ArgumentParser()
 
-# Para probar varias veces manualmente, déjalo en True.
-# Cuando lo programes cada 15 minutos, cámbialo a False.
-FORCE_RUN = True
+    parser.add_argument("--postgres_user", default=os.getenv("POSTGRES_USER", ""))
+    parser.add_argument("--postgres_password", default=os.getenv("POSTGRES_PASSWORD", ""))
+    parser.add_argument("--postgres_host", default=os.getenv("POSTGRES_HOST", "aws-1-us-east-1.pooler.supabase.com"))
+    parser.add_argument("--postgres_port", default=os.getenv("POSTGRES_PORT", "6543"))
+    parser.add_argument("--postgres_dbname", default=os.getenv("POSTGRES_DBNAME", "postgres"))
+    parser.add_argument("--force_run", default=os.getenv("FORCE_RUN", "true"))
+
+    args, _ = parser.parse_known_args()
+    return args
+
+
+args = get_args()
+
+POSTGRES_USER = args.postgres_user
+POSTGRES_PASSWORD = args.postgres_password
+POSTGRES_HOST = args.postgres_host
+POSTGRES_PORT = args.postgres_port
+POSTGRES_DBNAME = args.postgres_dbname
+
+# Para probar varias veces manualmente, usa true.
+# Cuando lo programes cada 15 minutos, usa false.
+FORCE_RUN = str(args.force_run).lower() == "true"
+
+if not POSTGRES_USER or not POSTGRES_PASSWORD or not POSTGRES_HOST:
+    raise Exception(
+        "Faltan credenciales. Configura postgres_user, postgres_password y postgres_host en Parameters del Job."
+    )
 
 
 # ============================================================
