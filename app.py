@@ -360,9 +360,23 @@ def apply_filters(locations: pd.DataFrame) -> pd.DataFrame:
 def joined_results(
     candidates: pd.DataFrame, locations: pd.DataFrame, votes: pd.DataFrame
 ) -> pd.DataFrame:
-    data = votes.merge(candidates, on="candidate_id", how="left").merge(
-        locations[["location_id", "region", "province", "district"]], on="location_id", how="left"
+    # Primero se toman solo las ubicaciones que quedaron después de aplicar filtros
+    location_ids = locations["location_id"].dropna().unique()
+
+    # Luego se filtran los votos para quedarse solo con esas ubicaciones
+    filtered_votes = votes[votes["location_id"].isin(location_ids)].copy()
+
+    # Finalmente se unen candidatos + ubicación geográfica
+    data = filtered_votes.merge(
+        candidates,
+        on="candidate_id",
+        how="left"
+    ).merge(
+        locations[["location_id", "region", "province", "district"]],
+        on="location_id",
+        how="inner"
     )
+
     return data
 
 
@@ -910,31 +924,498 @@ def page_resumen(candidates, locations, votes):
 
 
 def page_resultados(candidates, locations, votes):
-    data = joined_results(candidates, locations, votes)
-    summary = candidate_summary(data)
+    # ======================================================
+    # Estilos visuales propios del módulo de resultados
+    # ======================================================
+    st.markdown(
+        """
+        <style>
+            .result-hero {
+                background: linear-gradient(135deg, #003C7D 0%, #0B5CAB 55%, #1F78D1 100%);
+                color: white;
+                padding: 26px 30px;
+                border-radius: 18px;
+                margin-bottom: 22px;
+                box-shadow: 0 8px 22px rgba(0, 60, 125, 0.18);
+            }
+            .result-hero h2 {
+                margin: 0;
+                font-size: 2rem;
+                font-weight: 800;
+                letter-spacing: -0.5px;
+            }
+            .result-hero p {
+                margin-top: 8px;
+                margin-bottom: 0;
+                color: #EAF4FF;
+                font-size: 0.95rem;
+            }
+            .result-pill {
+                display: inline-block;
+                background: rgba(255,255,255,0.16);
+                border: 1px solid rgba(255,255,255,0.28);
+                color: white;
+                padding: 6px 12px;
+                border-radius: 999px;
+                font-size: 0.78rem;
+                font-weight: 700;
+                margin-bottom: 12px;
+            }
+            .res-metric {
+                background: #FFFFFF;
+                border: 1px solid #E5E7EB;
+                border-radius: 18px;
+                padding: 18px 18px;
+                min-height: 125px;
+                box-shadow: 0 5px 15px rgba(15, 23, 42, 0.06);
+                transition: all 0.2s ease;
+            }
+            .res-metric:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 8px 22px rgba(15, 23, 42, 0.09);
+            }
+            .res-metric-top {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 10px;
+            }
+            .res-metric-title {
+                color: #64748B;
+                font-size: 0.82rem;
+                font-weight: 700;
+            }
+            .res-metric-icon {
+                background: #EAF4FF;
+                color: #003C7D;
+                width: 34px;
+                height: 34px;
+                border-radius: 12px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 1.1rem;
+            }
+            .res-metric-value {
+                color: #111827;
+                font-size: 1.9rem;
+                font-weight: 800;
+                line-height: 1.1;
+            }
+            .res-metric-help {
+                color: #64748B;
+                font-size: 0.78rem;
+                margin-top: 8px;
+            }
+            .leader-card {
+                background: #FFFFFF;
+                border: 1px solid #E5E7EB;
+                border-radius: 16px;
+                padding: 16px;
+                min-height: 120px;
+                box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+            }
+            .leader-rank {
+                color: #003C7D;
+                font-size: 0.78rem;
+                font-weight: 800;
+                text-transform: uppercase;
+                margin-bottom: 8px;
+            }
+            .leader-name {
+                color: #111827;
+                font-size: 1rem;
+                font-weight: 800;
+                margin-bottom: 4px;
+            }
+            .leader-party {
+                color: #64748B;
+                font-size: 0.82rem;
+                margin-bottom: 10px;
+            }
+            .leader-percent {
+                color: #0B5CAB;
+                font-size: 1.35rem;
+                font-weight: 800;
+            }
+            .insight-box {
+                background: #EAF4FF;
+                border-left: 5px solid #0B5CAB;
+                color: #003C7D;
+                padding: 15px 18px;
+                border-radius: 14px;
+                font-size: 0.92rem;
+                margin-top: 8px;
+                margin-bottom: 18px;
+            }
+            .section-title {
+                font-size: 1.35rem;
+                font-weight: 800;
+                color: #111827;
+                margin-bottom: 4px;
+            }
+            .section-subtitle {
+                font-size: 0.82rem;
+                color: #64748B;
+                margin-bottom: 14px;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # ======================================================
+    # Cabecera visual
+    # ======================================================
+    st.markdown(
+        """
+        <div class="result-hero">
+            <div class="result-pill">Módulo de resultados</div>
+            <h2>Resultados electorales</h2>
+            <p>Consulta consolidada de votos por candidato, organización política y zona geográfica.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # ======================================================
+    # Filtros
+    # ======================================================
+    with st.container(border=True):
+        st.markdown("### Filtros de consulta")
+        st.caption("Selecciona una zona para recalcular votos, ranking, avance de actas y descarga.")
+
+        f1, f2, f3 = st.columns(3)
+
+        with f1:
+            regiones = ["Todas"] + sorted(locations["region"].dropna().unique().tolist())
+            region_seleccionada = st.selectbox("Región", regiones, key="res_region")
+
+        base_provincia = locations.copy()
+        if region_seleccionada != "Todas":
+            base_provincia = base_provincia[base_provincia["region"] == region_seleccionada]
+
+        with f2:
+            provincias = ["Todas"] + sorted(base_provincia["province"].dropna().unique().tolist())
+            provincia_seleccionada = st.selectbox("Provincia", provincias, key="res_province")
+
+        base_distrito = base_provincia.copy()
+        if provincia_seleccionada != "Todas":
+            base_distrito = base_distrito[base_distrito["province"] == provincia_seleccionada]
+
+        with f3:
+            distritos = ["Todos"] + sorted(base_distrito["district"].dropna().unique().tolist())
+            distrito_seleccionado = st.selectbox("Distrito", distritos, key="res_district")
+
+    # ======================================================
+    # Aplicar filtros
+    # ======================================================
+    filtered_locations = locations.copy()
+
+    if region_seleccionada != "Todas":
+        filtered_locations = filtered_locations[filtered_locations["region"] == region_seleccionada]
+
+    if provincia_seleccionada != "Todas":
+        filtered_locations = filtered_locations[filtered_locations["province"] == provincia_seleccionada]
+
+    if distrito_seleccionado != "Todos":
+        filtered_locations = filtered_locations[filtered_locations["district"] == distrito_seleccionado]
+
+    if filtered_locations.empty:
+        st.warning("No hay información disponible para los filtros seleccionados.")
+        return
+
+    data = joined_results(candidates, filtered_locations, votes)
+    summary = candidate_summary(data).reset_index(drop=True)
+
+    if summary.empty:
+        st.warning("No hay resultados electorales disponibles para esta consulta.")
+        return
+
+    summary.insert(0, "posicion", range(1, len(summary) + 1))
+
+    # ======================================================
+    # Cálculo de métricas principales
+    # ======================================================
     total_votes = int(summary["valid_votes"].sum())
+    total_actas = int(filtered_locations["total_actas"].sum())
+    actas_contabilizadas = int(filtered_locations["actas_contabilizadas"].sum())
 
-    st.markdown("## Resultados electorales")
-    st.caption("Vista consolidada por candidato y organización política")
+    if "actas_pendientes" in filtered_locations.columns:
+        actas_pendientes = int(filtered_locations["actas_pendientes"].sum())
+    else:
+        actas_pendientes = max(total_actas - actas_contabilizadas, 0)
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Votos válidos", format_int(total_votes))
-    c2.metric("Candidatos", str(len(summary)))
-    c3.metric("Actas contabilizadas", format_int(locations["actas_contabilizadas"].sum()))
+    avance_pct = (actas_contabilizadas / total_actas * 100) if total_actas > 0 else 0
 
-    left, right = st.columns([1.3, 1])
+    lider = summary.iloc[0]
+    segundo = summary.iloc[1] if len(summary) > 1 else None
+    diferencia = lider["percentage"] - segundo["percentage"] if segundo is not None else 0
+
+    def res_metric(icon, title, value, help_text):
+        st.markdown(
+            f"""
+            <div class="res-metric">
+                <div class="res-metric-top">
+                    <div class="res-metric-title">{title}</div>
+                    <div class="res-metric-icon">{icon}</div>
+                </div>
+                <div class="res-metric-value">{value}</div>
+                <div class="res-metric-help">{help_text}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.write("")
+    m1, m2, m3, m4 = st.columns(4)
+
+    with m1:
+        res_metric("🗳️", "Votos válidos", format_int(total_votes), "Total acumulado según filtros")
+
+    with m2:
+        res_metric("📄", "Actas contabilizadas", format_int(actas_contabilizadas), f"{avance_pct:.1f}% de avance")
+
+    with m3:
+        res_metric("🏆", "Líder actual", lider["party_name"], f"{lider['percentage']:.2f}% de votos válidos")
+
+    with m4:
+        res_metric("📊", "Diferencia 1.º vs 2.º", f"{diferencia:.2f} pp", "Puntos porcentuales")
+
+    st.write("")
+
+    # ======================================================
+    # Lectura rápida
+    # ======================================================
+    if segundo is not None:
+        insight = (
+            f"Con los filtros aplicados, <b>{lider['candidate_name']}</b> de <b>{lider['party_name']}</b> "
+            f"lidera con <b>{lider['percentage']:.2f}%</b> de votos válidos. "
+            f"La diferencia frente a <b>{segundo['candidate_name']}</b> es de <b>{diferencia:.2f} puntos porcentuales</b>. "
+            f"El avance de actas en esta consulta es de <b>{avance_pct:.1f}%</b>."
+        )
+    else:
+        insight = (
+            f"Con los filtros aplicados, se registra información para <b>{lider['candidate_name']}</b> "
+            f"con un avance de actas de <b>{avance_pct:.1f}%</b>."
+        )
+
+    st.markdown(f"<div class='insight-box'>{insight}</div>", unsafe_allow_html=True)
+    st.progress(min(avance_pct / 100, 1.0), text=f"Avance de actas procesadas: {avance_pct:.1f}%")
+
+    # ======================================================
+    # Podio de candidatos
+    # ======================================================
+    st.write("")
+    st.markdown("### Podio de resultados")
+    st.caption("Primeras posiciones según la consulta seleccionada")
+
+    podium_cols = st.columns(3)
+    medals = ["🥇 Primer lugar", "🥈 Segundo lugar", "🥉 Tercer lugar"]
+
+    for idx, col in enumerate(podium_cols):
+        if idx < len(summary):
+            row = summary.iloc[idx]
+            with col:
+                st.markdown(
+                    f"""
+                    <div class="leader-card">
+                        <div class="leader-rank">{medals[idx]}</div>
+                        <div class="leader-name">{row['candidate_name']}</div>
+                        <div class="leader-party">{row['party_name']}</div>
+                        <div class="leader-percent">{row['percentage']:.2f}%</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+    # ======================================================
+    # Gráfico y ranking
+    # ======================================================
+    st.write("")
+    left, right = st.columns([1.35, 1])
+
     with left:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.plotly_chart(make_votes_chart(summary), use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown('<div class="section-title">Distribución de votos</div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="section-subtitle">Votos válidos acumulados por organización política</div>',
+                unsafe_allow_html=True,
+            )
+
+            chart = summary.sort_values("valid_votes", ascending=True).copy()
+            color_map = dict(zip(chart["party_name"], chart["display_color"]))
+
+            fig = px.bar(
+                chart,
+                x="valid_votes",
+                y="party_name",
+                orientation="h",
+                text=chart["valid_votes"].map(format_int),
+                color="party_name",
+                color_discrete_map=color_map,
+                hover_data={
+                    "candidate_name": True,
+                    "valid_votes": ":,",
+                    "percentage": ":.2f",
+                    "party_name": False,
+                },
+            )
+
+            fig.update_traces(
+                textposition="outside",
+                cliponaxis=False,
+                marker_line_width=0,
+                hovertemplate="<b>%{customdata[0]}</b><br>Votos: %{x:,}<br>Porcentaje: %{customdata[2]:.2f}%<extra></extra>",
+            )
+
+            fig.update_layout(
+                height=430,
+                showlegend=False,
+                margin=dict(l=10, r=35, t=10, b=10),
+                xaxis_title="Votos válidos",
+                yaxis_title="",
+                plot_bgcolor="white",
+                paper_bgcolor="white",
+                font=dict(color=TEXT_DARK),
+                xaxis=dict(showgrid=True, gridcolor="#E5E7EB"),
+                yaxis=dict(showgrid=False),
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+
     with right:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        table = summary[["candidate_name", "party_name", "valid_votes", "percentage"]].copy()
-        table.columns = ["Candidato", "Organización política", "Votos", "%"]
-        table["Votos"] = table["Votos"].map(format_int)
-        table["%"] = table["%"].map(lambda x: f"{x:.2f}%")
-        st.dataframe(table, use_container_width=True, hide_index=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown('<div class="section-title">Ranking de candidatos</div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="section-subtitle">Ordenado de mayor a menor votación</div>',
+                unsafe_allow_html=True,
+            )
+
+            tabla = summary[
+                ["posicion", "candidate_name", "party_name", "valid_votes", "percentage"]
+            ].copy()
+
+            tabla = tabla.rename(
+                columns={
+                    "posicion": "Puesto",
+                    "candidate_name": "Candidato",
+                    "party_name": "Organización política",
+                    "valid_votes": "Votos",
+                    "percentage": "% votos",
+                }
+            )
+
+            st.dataframe(
+                tabla,
+                use_container_width=True,
+                hide_index=True,
+                height=390,
+                column_config={
+                    "Puesto": st.column_config.NumberColumn("Puesto", format="%d"),
+                    "Votos": st.column_config.NumberColumn("Votos", format="%d"),
+                    "% votos": st.column_config.ProgressColumn(
+                        "% votos",
+                        format="%.2f%%",
+                        min_value=0,
+                        max_value=100,
+                    ),
+                },
+            )
+
+    # ======================================================
+    # Avance de actas y descarga
+    # ======================================================
+    st.write("")
+    col_a, col_b = st.columns([1.2, 1])
+
+    with col_a:
+        with st.container(border=True):
+            st.markdown('<div class="section-title">Avance de actas de la consulta</div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="section-subtitle">Detalle territorial usado para calcular los resultados</div>',
+                unsafe_allow_html=True,
+            )
+
+            avance_tabla = filtered_locations[
+                ["region", "province", "district", "total_actas", "actas_contabilizadas", "actas_pendientes"]
+            ].copy()
+
+            avance_tabla["% avance"] = np.where(
+                avance_tabla["total_actas"] > 0,
+                avance_tabla["actas_contabilizadas"] / avance_tabla["total_actas"] * 100,
+                0,
+            )
+
+            avance_tabla = avance_tabla.rename(
+                columns={
+                    "region": "Región",
+                    "province": "Provincia",
+                    "district": "Distrito",
+                    "total_actas": "Actas totales",
+                    "actas_contabilizadas": "Procesadas",
+                    "actas_pendientes": "Pendientes",
+                }
+            )
+
+            st.dataframe(
+                avance_tabla,
+                use_container_width=True,
+                hide_index=True,
+                height=280,
+                column_config={
+                    "Actas totales": st.column_config.NumberColumn("Actas totales", format="%d"),
+                    "Procesadas": st.column_config.NumberColumn("Procesadas", format="%d"),
+                    "Pendientes": st.column_config.NumberColumn("Pendientes", format="%d"),
+                    "% avance": st.column_config.ProgressColumn(
+                        "% avance",
+                        format="%.1f%%",
+                        min_value=0,
+                        max_value=100,
+                    ),
+                },
+            )
+
+    with col_b:
+        with st.container(border=True):
+            st.markdown('<div class="section-title">Exportar resultados</div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="section-subtitle">Descarga la información filtrada para reportes o evidencias.</div>',
+                unsafe_allow_html=True,
+            )
+
+            exportar = summary[
+                ["posicion", "candidate_name", "party_name", "valid_votes", "percentage"]
+            ].copy()
+
+            exportar = exportar.rename(
+                columns={
+                    "posicion": "puesto",
+                    "candidate_name": "candidato",
+                    "party_name": "organizacion_politica",
+                    "valid_votes": "votos_validos",
+                    "percentage": "porcentaje",
+                }
+            )
+
+            st.download_button(
+                "⬇️ Descargar resultados en CSV",
+                exportar.to_csv(index=False).encode("utf-8"),
+                "resultados_electorales_filtrados.csv",
+                "text/csv",
+                use_container_width=True,
+            )
+
+            st.write("")
+            st.markdown("#### Resumen de la consulta")
+            st.markdown(
+                f"""
+                - **Actas totales:** {format_int(total_actas)}
+                - **Actas procesadas:** {format_int(actas_contabilizadas)}
+                - **Actas pendientes:** {format_int(actas_pendientes)}
+                - **Avance:** {avance_pct:.1f}%
+                """
+            )
 
 
 def page_mapa(locations, candidates, votes):
