@@ -753,7 +753,7 @@ def make_map(locations: pd.DataFrame, metrics: dict) -> go.Figure:
     map_df = locations.copy()
 
     # Si la BD ya trae estado desde Databricks, usamos ese estado.
-    # Si no existe, lo calculamos por velocidad como respaldo.
+    # Si no existe, lo calculamos por velocidad como respaldo. -------- 
     if "estado" not in map_df.columns:
         threshold = metrics["slow_threshold"]
         map_df["estado"] = np.where(
