@@ -1,590 +1,585 @@
-
 # Databricks notebook source
 # ============================================================
-# Cloud Election Sentinel - Databricks Job liviano
-# Simula actualización de conteo electoral cada 15 minutos.
-# Python + Supabase/PostgreSQL. Sin IA, sin pandas, sin numpy.
+# Cloud Election Sentinel - Databricks Job SIMPLE
+# Actualiza data simulada cada 15 minutos
+# Proyecto pequeño: 1 tabla principal + logs + control de ejecución
+# SIN IA, SIN pandas, SIN numpy, SIN toml
 # ============================================================
 
-# IMPORTANTE:
-# 1) Evita instalar librerías pesadas en cada ejecución del job.
-# 2) En Databricks, instala psycopg2-binary y toml como librerías del cluster/job.
-# 3) Si tu docente te exige instalar desde el notebook, descomenta estas 2 líneas:
-# %pip install -q psycopg2-binary toml
-# dbutils.library.restartPython()
-
 import os
+import argparse
 import random
 from datetime import datetime, timezone
-from decimal import Decimal
-
-import toml
 import psycopg2
 
 
 # ============================================================
-# 1. Parámetros del job
+# 1. CONFIGURACIÓN SEGURA SUPABASE
 # ============================================================
+# Las credenciales ya NO van escritas en el código.
+# Debes pasarlas desde Databricks en el campo Parameters
+# o como variables de entorno.
+#
+# Si usas POOLER de Supabase, el usuario debe ser:
+# postgres.TU_PROJECT_REF
 
-def get_widget_or_default(name: str, default: str) -> str:
-    try:
-        dbutils.widgets.text(name, default)
-        return dbutils.widgets.get(name)
-    except Exception:
-        return os.getenv(name.upper(), default)
+def get_args():
+    parser = argparse.ArgumentParser()
 
+    parser.add_argument("--postgres_user", default=os.getenv("POSTGRES_USER", ""))
+    parser.add_argument("--postgres_password", default=os.getenv("POSTGRES_PASSWORD", ""))
+    parser.add_argument("--postgres_host", default=os.getenv("POSTGRES_HOST", "aws-1-us-east-1.pooler.supabase.com"))
+    parser.add_argument("--postgres_port", default=os.getenv("POSTGRES_PORT", "6543"))
+    parser.add_argument("--postgres_dbname", default=os.getenv("POSTGRES_DBNAME", "postgres"))
+    parser.add_argument("--force_run", default=os.getenv("FORCE_RUN", "true"))
 
-FORCE_RUN = get_widget_or_default("force_run", "false").lower() == "true"
-SECRETS_PATH = get_widget_or_default("secrets_path", "secrets.toml")
-
-# Si quieres controlar qué tanto crece en cada corrida:
-MIN_FACTOR = float(get_widget_or_default("min_factor", "0.004"))
-MAX_FACTOR = float(get_widget_or_default("max_factor", "0.018"))
-
-
-# ============================================================
-# 2. Leer credenciales
-# ============================================================
-
-def load_postgres_config():
-    """
-    Prioridad:
-    1. Variables de entorno de Databricks.
-    2. Archivo secrets.toml.
-    """
-    env_user = os.getenv("POSTGRES_USER")
-    env_password = os.getenv("POSTGRES_PASSWORD")
-    env_host = os.getenv("POSTGRES_HOST")
-    env_port = os.getenv("POSTGRES_PORT", "5432")
-    env_dbname = os.getenv("POSTGRES_DBNAME", "postgres")
-
-    if env_user and env_password and env_host:
-        return {
-            "USER": env_user,
-            "PASSWORD": env_password,
-            "HOST": env_host,
-            "PORT": env_port,
-            "DBNAME": env_dbname,
-        }
-
-    secrets = toml.load(SECRETS_PATH)["postgres"]
-    return {
-        "USER": secrets["USER"],
-        "PASSWORD": secrets["PASSWORD"],
-        "HOST": secrets["HOST"],
-        "PORT": str(secrets.get("PORT", "5432")),
-        "DBNAME": secrets.get("DBNAME", "postgres"),
-    }
+    args, _ = parser.parse_known_args()
+    return args
 
 
-def get_connection():
-    cfg = load_postgres_config()
-    return psycopg2.connect(
-        user=cfg["USER"],
-        password=cfg["PASSWORD"],
-        host=cfg["HOST"],
-        port=cfg["PORT"],
-        dbname=cfg["DBNAME"],
-        sslmode="require",
-        connect_timeout=10,
+args = get_args()
+
+POSTGRES_USER = args.postgres_user
+POSTGRES_PASSWORD = args.postgres_password
+POSTGRES_HOST = args.postgres_host
+POSTGRES_PORT = args.postgres_port
+POSTGRES_DBNAME = args.postgres_dbname
+
+# Para probar varias veces manualmente, usa true.
+# Cuando lo programes cada 15 minutos, usa false.
+FORCE_RUN = str(args.force_run).lower() == "true"
+
+if not POSTGRES_USER or not POSTGRES_PASSWORD or not POSTGRES_HOST:
+    raise Exception(
+        "Faltan credenciales. Configura postgres_user, postgres_password y postgres_host en Parameters del Job."
     )
 
 
 # ============================================================
-# 3. DDL: tablas necesarias
+# 2. CONEXIÓN
+# ============================================================
+
+def get_connection():
+    return psycopg2.connect(
+        user=POSTGRES_USER,
+        password=POSTGRES_PASSWORD,
+        host=POSTGRES_HOST,
+        port=POSTGRES_PORT,
+        dbname=POSTGRES_DBNAME,
+        sslmode="require",
+        connect_timeout=10
+    )
+
+
+# ============================================================
+# 3. TABLAS PEQUEÑAS
 # ============================================================
 
 DDL = """
-CREATE TABLE IF NOT EXISTS candidates (
-    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-    nombre TEXT NOT NULL UNIQUE,
-    partido TEXT,
-    orden INTEGER,
-    color_hex TEXT,
-    created_at TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS locations (
-    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-    region TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS ces_conteo (
+    id SERIAL PRIMARY KEY,
+    region TEXT UNIQUE NOT NULL,
     provincia TEXT NOT NULL,
     distrito TEXT NOT NULL,
-    lugar_votacion TEXT NOT NULL,
-    total_actas INTEGER NOT NULL,
-    actas_contabilizadas INTEGER NOT NULL DEFAULT 0,
-    actas_pendientes INTEGER NOT NULL DEFAULT 0,
-    avance_pct NUMERIC(6,2) NOT NULL DEFAULT 0,
-    velocidad_actas_h NUMERIC(10,2) NOT NULL DEFAULT 0,
-    estado_conteo TEXT NOT NULL DEFAULT 'Sin información',
-    color_estado TEXT NOT NULL DEFAULT 'gris',
+
+    actas_total INTEGER NOT NULL,
+    actas_contabilizadas INTEGER DEFAULT 0,
+    actas_pendientes INTEGER DEFAULT 0,
+    avance_pct NUMERIC(6,2) DEFAULT 0,
+    velocidad_actas_hora NUMERIC(10,2) DEFAULT 0,
+    ultimo_ingreso_actas INTEGER DEFAULT 0,
+
+    estado TEXT DEFAULT 'Sin información',
+    color_estado TEXT DEFAULT 'gray',
     motivo_retraso TEXT,
     detalle_retraso TEXT,
-    updated_at TIMESTAMPTZ DEFAULT now(),
-    created_at TIMESTAMPTZ DEFAULT now(),
-    UNIQUE(region, provincia, distrito, lugar_votacion)
+
+    votos_a INTEGER DEFAULT 0,
+    votos_b INTEGER DEFAULT 0,
+    votos_c INTEGER DEFAULT 0,
+    votos_d INTEGER DEFAULT 0,
+    votos_e INTEGER DEFAULT 0,
+
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS vote_results (
-    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-    location_id BIGINT NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-    candidate_id BIGINT NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
-    votos BIGINT NOT NULL DEFAULT 0,
-    updated_at TIMESTAMPTZ DEFAULT now(),
-    UNIQUE(location_id, candidate_id)
-);
-
-CREATE TABLE IF NOT EXISTS event_logs (
-    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-    fecha_hora TIMESTAMPTZ NOT NULL DEFAULT now(),
+CREATE TABLE IF NOT EXISTS ces_logs (
+    id SERIAL PRIMARY KEY,
+    fecha_hora TIMESTAMPTZ DEFAULT NOW(),
     tipo TEXT NOT NULL,
     evento TEXT NOT NULL,
-    detalle TEXT,
-    region TEXT,
-    provincia TEXT,
-    distrito TEXT
+    detalle TEXT
 );
 
-CREATE TABLE IF NOT EXISTS job_executions (
-    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-    run_slot TEXT NOT NULL UNIQUE,
-    fecha_hora TIMESTAMPTZ NOT NULL DEFAULT now(),
-    registros_actualizados INTEGER NOT NULL DEFAULT 0,
-    actas_nuevas INTEGER NOT NULL DEFAULT 0,
-    estado TEXT NOT NULL,
-    detalle TEXT
+CREATE TABLE IF NOT EXISTS ces_job_runs (
+    execution_key TEXT PRIMARY KEY,
+    executed_at TIMESTAMPTZ DEFAULT NOW(),
+    nuevas_actas INTEGER DEFAULT 0,
+    zonas_criticas INTEGER DEFAULT 0
 );
 """
 
 
 # ============================================================
-# 4. Data base simulada
+# 4. DATA SIMULADA PEQUEÑA
 # ============================================================
 
-CANDIDATES = [
-    ("Keiko Fujimori", "Fuerza Popular", 1, "#123C7C"),
-    ("Roberto Sánchez", "Juntos por el Perú", 2, "#1E63C9"),
-    ("Rafael López Aliaga", "Renovación Popular", 3, "#82BFE3"),
-    ("César Acuña", "Alianza Popular", 4, "#8AC5E8"),
-    ("Fernando Olivera", "Obras por el Perú", 5, "#93CAE8"),
-    ("George Forsyth", "País para Todos", 6, "#9BD0EC"),
-    ("Alfredo Barnechea", "Acción Popular", 7, "#A5D6EF"),
+REGIONES = [
+    ("Lima", "Lima", "Comas", 1500),
+    ("Arequipa", "Arequipa", "Cercado", 1000),
+    ("Cusco", "Cusco", "Wanchaq", 900),
+    ("Puno", "Puno", "Juliaca", 1100),
+    ("Huancavelica", "Huancavelica", "Ascensión", 700),
+    ("Ucayali", "Coronel Portillo", "Callería", 800),
+    ("Loreto", "Maynas", "Iquitos", 950),
 ]
 
-LOCATIONS = [
-    # region, provincia, distrito, lugar, total_actas
-    ("Lima", "Lima", "Miraflores", "IE Juana Alarco de Dammert", 780),
-    ("Lima", "Lima", "San Juan de Lurigancho", "IE Antenor Orrego", 1250),
-    ("Lima", "Lima", "Comas", "IE Estados Unidos", 980),
-
-    ("Arequipa", "Arequipa", "Cercado", "IE Independencia Americana", 620),
-    ("Arequipa", "Caylloma", "Chivay", "IE Francisco García Calderón", 280),
-
-    ("La Libertad", "Trujillo", "Trujillo", "IE San Juan", 720),
-    ("La Libertad", "Sánchez Carrión", "Huamachuco", "IE César Vallejo", 330),
-
-    ("Piura", "Piura", "Castilla", "IE Miguel Cortés", 610),
-    ("Piura", "Ayabaca", "Ayabaca", "IE Señor Cautivo", 260),
-
-    ("Cusco", "Cusco", "Wanchaq", "IE Garcilaso de la Vega", 540),
-    ("Cusco", "La Convención", "Santa Ana", "IE Manco II", 310),
-
-    ("Puno", "Puno", "Puno", "IE Gran Unidad San Carlos", 470),
-    ("Puno", "Azángaro", "Azángaro", "IE INA 21", 230),
-    ("Puno", "Carabaya", "Macusani", "IE Agropecuario", 190),
-
-    ("Huancavelica", "Huancavelica", "Ascensión", "IE La Victoria de Ayacucho", 210),
-    ("Huancavelica", "Tayacaja", "Pampas", "IE Daniel Hernández", 170),
-
-    ("Amazonas", "Chachapoyas", "Chachapoyas", "IE Seminario Jesús María", 200),
-    ("Amazonas", "Condorcanqui", "Nieva", "IE Nieva", 130),
-
-    ("Apurímac", "Abancay", "Abancay", "IE Miguel Grau", 250),
-    ("Apurímac", "Andahuaylas", "Talavera", "IE José María Arguedas", 190),
-
-    ("Ucayali", "Coronel Portillo", "Callería", "IE Faustino Maldonado", 420),
-    ("Ucayali", "Atalaya", "Raimondi", "IE Francisco Bolognesi", 150),
-]
-
-# Velocidad esperada por región. Menor factor = avance más lento.
-REGION_SPEED_FACTOR = {
-    "Lima": 1.60,
-    "Arequipa": 1.20,
-    "La Libertad": 1.15,
-    "Piura": 1.05,
-    "Cusco": 0.90,
-    "Puno": 0.45,
-    "Huancavelica": 0.42,
-    "Amazonas": 0.38,
-    "Apurímac": 0.50,
-    "Ucayali": 0.40,
-}
-
-# Probabilidad de incidencia por región.
-REGION_INCIDENT_PROB = {
-    "Lima": 0.03,
-    "Arequipa": 0.05,
-    "La Libertad": 0.06,
-    "Piura": 0.08,
-    "Cusco": 0.12,
-    "Puno": 0.35,
-    "Huancavelica": 0.38,
-    "Amazonas": 0.42,
-    "Apurímac": 0.30,
-    "Ucayali": 0.36,
-}
-
-INCIDENTS_BY_REGION = {
+PROBLEMAS = {
     "Puno": [
-        ("Corte eléctrico intermitente", "Interrupciones de energía en centros de acopio reducen la velocidad de registro y validación de actas."),
-        ("Traslado de material electoral", "La distancia entre locales de votación rurales y centros de procesamiento retrasa el ingreso de nuevas actas."),
-        ("Conectividad limitada", "La transmisión de información presenta demoras por baja estabilidad de red en zonas alejadas."),
+        ("Corte eléctrico intermitente", "Interrupciones de energía reducen la velocidad de registro de actas."),
+        ("Demora logística", "El traslado de actas desde zonas alejadas tarda más de lo previsto."),
+        ("Conectividad limitada", "La conexión inestable retrasa la actualización del conteo.")
     ],
     "Huancavelica": [
-        ("Condición de ruta", "Las rutas de acceso presentan demoras logísticas, reduciendo la llegada de actas al centro de procesamiento."),
-        ("Validación manual adicional", "Un grupo de actas requiere revisión operativa antes de su contabilización."),
-        ("Conectividad intermitente", "El registro se retrasa por cortes de comunicación en puntos de acopio."),
-    ],
-    "Amazonas": [
-        ("Traslado fluvial o rural", "La dispersión geográfica de locales de votación retrasa el traslado de documentación electoral."),
-        ("Demora logística", "La recolección de actas avanza por lotes pequeños debido a limitaciones de transporte."),
-        ("Conectividad limitada", "La carga de información se realiza de forma parcial por disponibilidad irregular de red."),
+        ("Condición de ruta", "Las rutas de acceso presentan demoras para trasladar actas."),
+        ("Validación manual adicional", "Algunas actas requieren revisión antes de ser contabilizadas.")
     ],
     "Ucayali": [
-        ("Transporte fluvial", "Algunas actas dependen de rutas fluviales, lo que genera retrasos en su llegada al punto de registro."),
-        ("Conectividad intermitente", "La transmisión de datos se realiza de forma irregular por cobertura limitada."),
-        ("Demora logística", "El ingreso de actas avanza por tandas debido a la distancia entre centros poblados."),
+        ("Traslado lento", "El traslado desde zonas alejadas retrasa el ingreso de actas."),
+        ("Conectividad intermitente", "La red no permite actualizar la información con normalidad.")
     ],
-    "Apurímac": [
-        ("Condición de ruta", "La geografía de la zona genera demoras en el traslado de material electoral."),
-        ("Carga acumulada", "El centro de procesamiento presenta acumulación temporal de actas pendientes."),
+    "Loreto": [
+        ("Transporte fluvial", "El traslado por río genera demoras en la llegada de actas."),
+        ("Condición climática", "Las lluvias dificultan el traslado del material electoral.")
+    ],
+    "Lima": [
+        ("Alta carga temporal", "El volumen de actas genera una demora operativa momentánea.")
+    ],
+    "Arequipa": [
+        ("Carga operativa", "El centro de procesamiento registra alta demanda temporal.")
     ],
     "Cusco": [
-        ("Traslado desde zonas rurales", "El ingreso de actas rurales se produce con menor velocidad que en zonas urbanas."),
-        ("Validación operativa", "Algunas actas requieren validación previa antes de ser contabilizadas."),
-    ],
-    "default": [
-        ("Carga operativa temporal", "El centro de procesamiento recibió más actas de lo habitual y el registro avanza por lotes."),
-        ("Validación manual adicional", "Algunas actas requieren revisión antes de ser contabilizadas."),
-        ("Sin incidencia crítica", "El avance se mantiene dentro del comportamiento esperado del proceso."),
+        ("Demora logística", "Algunos locales alejados tardan más en enviar actas.")
     ],
 }
 
 
 # ============================================================
-# 5. Funciones auxiliares
+# 5. FUNCIONES AUXILIARES
 # ============================================================
 
-def current_15_min_slot() -> str:
+def execution_key_15min():
     now = datetime.now(timezone.utc)
-    minute_slot = (now.minute // 15) * 15
-    slot = now.replace(minute=minute_slot, second=0, microsecond=0)
-    return slot.strftime("%Y-%m-%dT%H:%M:%SZ")
+    slot = (now.minute // 15) * 15
+    return now.strftime("%Y%m%d%H") + f"{slot:02d}"
 
 
-def setup_database(conn):
-    with conn.cursor() as cur:
-        cur.execute(DDL)
-    conn.commit()
+def get_problem(region):
+    return random.choice(PROBLEMAS.get(region, PROBLEMAS["Lima"]))
 
 
-def seed_base_data(conn):
-    with conn.cursor() as cur:
-        for nombre, partido, orden, color_hex in CANDIDATES:
-            cur.execute("""
-                INSERT INTO candidates (nombre, partido, orden, color_hex)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (nombre) DO UPDATE SET
-                    partido = EXCLUDED.partido,
-                    orden = EXCLUDED.orden,
-                    color_hex = EXCLUDED.color_hex
-            """, (nombre, partido, orden, color_hex))
-
-        for region, provincia, distrito, lugar, total_actas in LOCATIONS:
-            # Carga inicial: entre 8% y 22% para que el dashboard no empiece vacío.
-            initial_count = int(total_actas * random.uniform(0.08, 0.22))
-            pendientes = total_actas - initial_count
-            avance = round((initial_count / total_actas) * 100, 2)
-
-            cur.execute("""
-                INSERT INTO locations (
-                    region, provincia, distrito, lugar_votacion,
-                    total_actas, actas_contabilizadas, actas_pendientes,
-                    avance_pct, velocidad_actas_h, estado_conteo, color_estado,
-                    motivo_retraso, detalle_retraso, updated_at
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0, 'Avance inicial', 'amarillo',
-                        'Carga inicial simulada',
-                        'Se registra una base inicial para iniciar el monitoreo del conteo.',
-                        now())
-                ON CONFLICT (region, provincia, distrito, lugar_votacion) DO NOTHING
-            """, (region, provincia, distrito, lugar, total_actas, initial_count, pendientes, avance))
-
-    conn.commit()
-
-
-def already_executed(conn, run_slot: str) -> bool:
-    with conn.cursor() as cur:
-        cur.execute("SELECT 1 FROM job_executions WHERE run_slot = %s", (run_slot,))
-        return cur.fetchone() is not None
-
-
-def get_candidates(conn):
-    with conn.cursor() as cur:
-        cur.execute("SELECT id, nombre, orden FROM candidates ORDER BY orden")
-        return cur.fetchall()
-
-
-def get_locations(conn):
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT id, region, provincia, distrito, lugar_votacion,
-                   total_actas, actas_contabilizadas
-            FROM locations
-            WHERE actas_contabilizadas < total_actas
-            ORDER BY region, provincia, distrito
-        """)
-        return cur.fetchall()
-
-
-def choose_incident(region: str):
-    options = INCIDENTS_BY_REGION.get(region, INCIDENTS_BY_REGION["default"])
-    return random.choice(options)
-
-
-def classify_status(region: str, avance_pct: float, new_actas: int, speed_h: float, has_incident: bool):
-    """
-    Reglas simples para pintar el estado:
-    - rojo: avance muy bajo + poca actualización + incidencia.
-    - naranja: avance bajo o velocidad baja.
-    - verde: avance normal.
-    """
-    if has_incident and (new_actas <= 3 or speed_h < 20) and avance_pct < 85:
-        return "Retraso crítico", "rojo"
-
-    if new_actas <= 5 and avance_pct < 90:
-        return "Avance bajo", "naranja"
-
-    if speed_h < 30 and avance_pct < 90:
-        return "Avance bajo", "naranja"
-
-    if avance_pct >= 95:
-        return "Avance alto", "verde"
-
-    return "Avance normal", "verde"
-
-
-def distribute_votes(new_actas: int, candidates_count: int, region: str):
-    """
-    Convierte nuevas actas en votos simulados.
-    No usa IA. Solo distribución porcentual con pequeña variación regional.
-    """
-    if new_actas <= 0:
-        return [0] * candidates_count
-
-    voters_per_acta = random.randint(170, 260)
-    total_votes = new_actas * voters_per_acta
-
-    # Base parecida al ejemplo visual, pero con ruido.
-    base = [0.285, 0.187, 0.162, 0.134, 0.089, 0.063, 0.045]
-    base = base[:candidates_count]
-
-    # Ajustes regionales simulados para que no todo sea igual.
-    if region in ("Puno", "Cusco", "Apurímac", "Huancavelica"):
-        if candidates_count > 1:
-            base[1] += 0.035
-            base[0] -= 0.020
-    if region in ("Lima", "Arequipa"):
-        base[0] += 0.020
-        if candidates_count > 3:
-            base[3] -= 0.010
-    if region in ("Ucayali", "Amazonas"):
-        if candidates_count > 5:
-            base[5] += 0.025
-            base[2] -= 0.010
-
-    # Ruido controlado
-    noisy = []
-    for p in base:
-        noisy.append(max(0.01, p + random.uniform(-0.012, 0.012)))
-
-    total_p = sum(noisy)
-    normalized = [p / total_p for p in noisy]
-
-    votes = [int(total_votes * p) for p in normalized]
-    diff = total_votes - sum(votes)
-    if votes:
-        votes[0] += diff
-
-    return votes
-
-
-def update_one_location(conn, loc, candidates):
-    location_id, region, provincia, distrito, lugar, total_actas, current_count = loc
-
-    remaining = total_actas - current_count
-    if remaining <= 0:
-        return 0
-
-    speed_factor = REGION_SPEED_FACTOR.get(region, 0.85)
-    incident_prob = REGION_INCIDENT_PROB.get(region, 0.10)
-    has_incident = random.random() < incident_prob
-
-    # Cantidad de actas nuevas para esta ejecución de 15 minutos.
-    raw_increment = int(total_actas * random.uniform(MIN_FACTOR, MAX_FACTOR) * speed_factor)
-
-    if has_incident:
-        # Si hay incidencia, el ingreso baja fuerte.
-        raw_increment = int(raw_increment * random.uniform(0.10, 0.40))
-
-    # Evitar incrementos enormes y mantener simulación realista.
-    new_actas = max(0, min(remaining, raw_increment))
-
-    # Para zonas normales, evitar que siempre sea 0.
-    if not has_incident and remaining > 0:
-        new_actas = max(1, new_actas)
-
-    updated_count = current_count + new_actas
-    pending = total_actas - updated_count
-    avance_pct = round((updated_count / total_actas) * 100, 2)
-    speed_h = round(new_actas * 4, 2)  # porque cada corrida representa 15 min.
-
-    if has_incident:
-        motivo, detalle = choose_incident(region)
+def vote_distribution(region, total_votes):
+    if region in ["Puno", "Cusco", "Huancavelica"]:
+        weights = [0.18, 0.27, 0.13, 0.18, 0.24]
+    elif region in ["Ucayali", "Loreto"]:
+        weights = [0.20, 0.16, 0.14, 0.18, 0.32]
     else:
-        motivo = "Sin incidencia crítica"
-        detalle = "El conteo avanza dentro del ritmo esperado para la zona."
+        weights = [0.30, 0.20, 0.18, 0.16, 0.16]
 
-    estado, color = classify_status(region, avance_pct, new_actas, speed_h, has_incident)
+    return [int(total_votes * w) for w in weights]
 
-    with conn.cursor() as cur:
-        cur.execute("""
-            UPDATE locations
-            SET actas_contabilizadas = %s,
+
+def classify_status(total, counted, batch, issue_active, motivo, detalle):
+    avance = round((counted / total) * 100, 2)
+    velocidad = batch * 4
+
+    if counted >= total:
+        return "Conteo completo", "green", None, None, avance, velocidad
+
+    if issue_active and batch <= 5:
+        return "Retraso crítico", "red", motivo, detalle, avance, velocidad
+
+    if batch <= 10:
+        return "Avance bajo", "orange", motivo, detalle, avance, velocidad
+
+    if avance >= 80:
+        return "Avance alto", "green", None, None, avance, velocidad
+
+    if avance >= 50:
+        return "Avance medio", "yellow", None, None, avance, velocidad
+
+    return "Avance bajo", "orange", "Conteo en proceso", "La zona aún presenta bajo avance de actas.", avance, velocidad
+
+
+# ============================================================
+# 6. CREAR TABLAS Y CARGA INICIAL
+# ============================================================
+
+def setup_database(cursor):
+    cursor.execute(DDL)
+
+
+def seed_initial_data(cursor):
+    cursor.execute("SELECT COUNT(*) FROM ces_conteo")
+    count = cursor.fetchone()[0]
+
+    if count > 0:
+        return
+
+    for region, provincia, distrito, total in REGIONES:
+        counted = random.randint(int(total * 0.20), int(total * 0.35))
+        pending = total - counted
+        avance = round((counted / total) * 100, 2)
+
+        total_votes = counted * random.randint(120, 180)
+        votos = vote_distribution(region, total_votes)
+
+        cursor.execute(
+            """
+            INSERT INTO ces_conteo (
+                region,
+                provincia,
+                distrito,
+                actas_total,
+                actas_contabilizadas,
+                actas_pendientes,
+                avance_pct,
+                velocidad_actas_hora,
+                ultimo_ingreso_actas,
+                estado,
+                color_estado,
+                motivo_retraso,
+                detalle_retraso,
+                votos_a,
+                votos_b,
+                votos_c,
+                votos_d,
+                votos_e,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 0, 0, 'Avance bajo', 'orange',
+                    'Conteo inicial', 'La zona se encuentra en etapa inicial de procesamiento.',
+                    %s, %s, %s, %s, %s, NOW())
+            """,
+            (
+                region, provincia, distrito,
+                total, counted, pending, avance,
+                votos[0], votos[1], votos[2], votos[3], votos[4]
+            )
+        )
+
+    cursor.execute(
+        """
+        INSERT INTO ces_logs (tipo, evento, detalle)
+        VALUES ('Sistema', 'Carga inicial', 'Se cargó data inicial simulada para el dashboard electoral.')
+        """
+    )
+
+
+# ============================================================
+# 7. ACTUALIZACIÓN SIMULADA
+# ============================================================
+
+# ============================================================
+# 7. REINICIO AUTOMÁTICO DEL CONTEO
+# ============================================================
+
+def conteo_global_completo(cursor):
+    """
+    Verifica si todas las regiones llegaron al 100%.
+    """
+    cursor.execute("""
+        SELECT COUNT(*)
+        FROM ces_conteo
+        WHERE actas_contabilizadas < actas_total
+    """)
+    pendientes = cursor.fetchone()[0]
+
+    return pendientes == 0
+
+
+def reiniciar_conteo(cursor):
+    """
+    Reinicia el conteo electoral simulado.
+    Se ejecuta cuando todas las regiones llegaron al 100%.
+    """
+    print("🔄 Conteo al 100%. Reiniciando simulación electoral...")
+
+    for region, provincia, distrito, total in REGIONES:
+        counted = random.randint(int(total * 0.20), int(total * 0.35))
+        pending = total - counted
+        avance = round((counted / total) * 100, 2)
+
+        total_votes = counted * random.randint(120, 180)
+        votos = vote_distribution(region, total_votes)
+
+        cursor.execute(
+            """
+            UPDATE ces_conteo
+            SET
+                provincia = %s,
+                distrito = %s,
+                actas_total = %s,
+                actas_contabilizadas = %s,
                 actas_pendientes = %s,
                 avance_pct = %s,
-                velocidad_actas_h = %s,
-                estado_conteo = %s,
+                velocidad_actas_hora = 0,
+                ultimo_ingreso_actas = 0,
+                estado = 'Avance bajo',
+                color_estado = 'orange',
+                motivo_retraso = 'Nuevo ciclo de conteo',
+                detalle_retraso = 'El conteo anterior llegó al 100%, por lo que se inició una nueva simulación electoral.',
+                votos_a = %s,
+                votos_b = %s,
+                votos_c = %s,
+                votos_d = %s,
+                votos_e = %s,
+                updated_at = NOW()
+            WHERE region = %s
+            """,
+            (
+                provincia,
+                distrito,
+                total,
+                counted,
+                pending,
+                avance,
+                votos[0],
+                votos[1],
+                votos[2],
+                votos[3],
+                votos[4],
+                region
+            )
+        )
+
+    cursor.execute(
+        """
+        INSERT INTO ces_logs (tipo, evento, detalle)
+        VALUES (%s, %s, %s)
+        """,
+        (
+            "Sistema",
+            "Reinicio automático del conteo",
+            "Todas las regiones llegaron al 100% de actas contabilizadas. Se inició un nuevo ciclo de simulación."
+        )
+    )
+
+    # Limpia el historial de ejecuciones para que el nuevo ciclo no choque con ciclos anteriores.
+    cursor.execute("DELETE FROM ces_job_runs;")
+
+def simulate_update(cursor):
+    cursor.execute(
+        """
+        SELECT
+            id,
+            region,
+            provincia,
+            distrito,
+            actas_total,
+            actas_contabilizadas
+        FROM ces_conteo
+        ORDER BY id
+        """
+    )
+
+    rows = cursor.fetchall()
+
+    total_new_actas = 0
+    zonas_criticas = 0
+
+    for row in rows:
+        row_id = row[0]
+        region = row[1]
+        provincia = row[2]
+        distrito = row[3]
+        total = int(row[4])
+        counted = int(row[5])
+
+        remaining = total - counted
+
+        if remaining <= 0:
+            cursor.execute(
+                """
+                UPDATE ces_conteo
+                SET
+                    actas_contabilizadas = actas_total,
+                    actas_pendientes = 0,
+                    avance_pct = 100,
+                    velocidad_actas_hora = 0,
+                    ultimo_ingreso_actas = 0,
+                    estado = 'Conteo completo',
+                    color_estado = 'green',
+                    motivo_retraso = NULL,
+                    detalle_retraso = NULL,
+                    updated_at = NOW()
+                WHERE id = %s
+                """,
+                (row_id,)
+            )
+            continue
+
+        zonas_riesgo = ["Puno", "Huancavelica", "Ucayali", "Loreto"]
+
+        issue_active = region in zonas_riesgo and random.random() < 0.65
+
+        if issue_active:
+            batch = random.randint(0, 6)
+        else:
+            batch = random.randint(8, 30)
+
+        batch = min(batch, remaining)
+
+        new_counted = counted + batch
+        new_pending = total - new_counted
+
+        motivo, detalle = get_problem(region)
+
+        estado, color, motivo_final, detalle_final, avance, velocidad = classify_status(
+            total,
+            new_counted,
+            batch,
+            issue_active,
+            motivo,
+            detalle
+        )
+
+        total_votes_new = batch * random.randint(120, 180)
+        votos = vote_distribution(region, total_votes_new)
+
+        cursor.execute(
+            """
+            UPDATE ces_conteo
+            SET
+                actas_contabilizadas = %s,
+                actas_pendientes = %s,
+                avance_pct = %s,
+                velocidad_actas_hora = %s,
+                ultimo_ingreso_actas = %s,
+                estado = %s,
                 color_estado = %s,
                 motivo_retraso = %s,
                 detalle_retraso = %s,
-                updated_at = now()
+                votos_a = votos_a + %s,
+                votos_b = votos_b + %s,
+                votos_c = votos_c + %s,
+                votos_d = votos_d + %s,
+                votos_e = votos_e + %s,
+                updated_at = NOW()
             WHERE id = %s
-        """, (
-            updated_count, pending, avance_pct, speed_h,
-            estado, color, motivo, detalle, location_id
-        ))
+            """,
+            (
+                new_counted,
+                new_pending,
+                avance,
+                velocidad,
+                batch,
+                estado,
+                color,
+                motivo_final,
+                detalle_final,
+                votos[0],
+                votos[1],
+                votos[2],
+                votos[3],
+                votos[4],
+                row_id
+            )
+        )
 
-        votes = distribute_votes(new_actas, len(candidates), region)
-        for idx, candidate in enumerate(candidates):
-            candidate_id = candidate[0]
-            votos = votes[idx] if idx < len(votes) else 0
-            cur.execute("""
-                INSERT INTO vote_results (location_id, candidate_id, votos, updated_at)
-                VALUES (%s, %s, %s, now())
-                ON CONFLICT (location_id, candidate_id)
-                DO UPDATE SET
-                    votos = vote_results.votos + EXCLUDED.votos,
-                    updated_at = now()
-            """, (location_id, candidate_id, votos))
+        total_new_actas += batch
 
-        if estado in ("Retraso crítico", "Avance bajo"):
-            cur.execute("""
-                INSERT INTO event_logs (fecha_hora, tipo, evento, detalle, region, provincia, distrito)
-                VALUES (now(), %s, %s, %s, %s, %s, %s)
-            """, (
-                "Alerta",
-                f"{estado} detectado en {region} - {distrito}",
-                f"{motivo}. {detalle} Último ingreso: {new_actas} actas. Avance: {avance_pct}%.",
-                region, provincia, distrito
-            ))
+        if estado == "Retraso crítico":
+            zonas_criticas += 1
 
-    return new_actas
+            cursor.execute(
+                """
+                INSERT INTO ces_logs (tipo, evento, detalle)
+                VALUES (%s, %s, %s)
+                """,
+                (
+                    "Alerta",
+                    "Retraso crítico detectado",
+                    f"{region} - {provincia} - {distrito}: {motivo_final}. Último ingreso: {batch} actas. Avance: {avance}%."
+                )
+            )
 
+    cursor.execute(
+        """
+        INSERT INTO ces_logs (tipo, evento, detalle)
+        VALUES (%s, %s, %s)
+        """,
+        (
+            "Actualización",
+            "Carga simulada de actas",
+            f"Se ingresaron {total_new_actas} nuevas actas. Zonas críticas detectadas: {zonas_criticas}."
+        )
+    )
 
-def insert_job_execution(conn, run_slot: str, updated_locations: int, total_new_actas: int, estado: str, detalle: str):
-    with conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO job_executions (run_slot, fecha_hora, registros_actualizados, actas_nuevas, estado, detalle)
-            VALUES (%s, now(), %s, %s, %s, %s)
-            ON CONFLICT (run_slot) DO NOTHING
-        """, (run_slot, updated_locations, total_new_actas, estado, detalle))
-
-        cur.execute("""
-            INSERT INTO event_logs (fecha_hora, tipo, evento, detalle)
-            VALUES (now(), %s, %s, %s)
-        """, (
-            "Job Databricks",
-            "Actualización simulada de conteo electoral",
-            f"Slot: {run_slot}. Lugares actualizados: {updated_locations}. Actas nuevas: {total_new_actas}."
-        ))
+    return total_new_actas, zonas_criticas
 
 
 # ============================================================
-# 6. Ejecución principal
+# 8. MAIN
 # ============================================================
 
 def main():
-    run_slot = current_15_min_slot()
-    print(f"Inicio del job Cloud Election Sentinel. Slot: {run_slot}. FORCE_RUN={FORCE_RUN}")
+    key = execution_key_15min()
 
-    # Semilla por slot para evitar comportamiento completamente errático.
-    random.seed(run_slot)
+    print("===================================================")
+    print("Cloud Election Sentinel - Job SIMPLE")
+    print("Execution key:", key)
+    print("Force run:", FORCE_RUN)
+    print("===================================================")
 
     conn = get_connection()
+    conn.autocommit = False
+    cursor = conn.cursor()
 
     try:
-        setup_database(conn)
-        seed_base_data(conn)
+        setup_database(cursor)
+        seed_initial_data(cursor)
 
-        if already_executed(conn, run_slot) and not FORCE_RUN:
-            print(f"El slot {run_slot} ya fue ejecutado. No se inserta data duplicada.")
+        cursor.execute(
+            "SELECT 1 FROM ces_job_runs WHERE execution_key = %s",
+            (key,)
+        )
+        exists = cursor.fetchone()
+
+        if exists and not FORCE_RUN:
+            print("Este bloque de 15 minutos ya fue ejecutado. No se duplica data.")
+            conn.commit()
             return
 
-        candidates = get_candidates(conn)
-        locations = get_locations(conn)
+        nuevas_actas, zonas_criticas = simulate_update(cursor)
 
-        updated_locations = 0
-        total_new_actas = 0
-
-        for loc in locations:
-            new_actas = update_one_location(conn, loc, candidates)
-            if new_actas >= 0:
-                updated_locations += 1
-                total_new_actas += new_actas
-
-        insert_job_execution(
-            conn,
-            run_slot=run_slot,
-            updated_locations=updated_locations,
-            total_new_actas=total_new_actas,
-            estado="OK",
-            detalle="Actualización simulada ejecutada correctamente desde Databricks."
+        cursor.execute(
+            """
+            INSERT INTO ces_job_runs (
+                execution_key,
+                nuevas_actas,
+                zonas_criticas
+            )
+            VALUES (%s, %s, %s)
+            ON CONFLICT (execution_key)
+            DO NOTHING
+            """,
+            (key, nuevas_actas, zonas_criticas)
         )
 
         conn.commit()
 
-        print("✅ Job finalizado correctamente.")
-        print(f"Registros actualizados: {updated_locations}")
-        print(f"Actas nuevas simuladas: {total_new_actas}")
+        print("✅ Job ejecutado correctamente")
+        print("Nuevas actas:", nuevas_actas)
+        print("Zonas críticas:", zonas_criticas)
 
     except Exception as e:
         conn.rollback()
-        print(f"❌ Error en el job: {str(e)}")
-        try:
-            insert_job_execution(
-                conn,
-                run_slot=run_slot,
-                updated_locations=0,
-                total_new_actas=0,
-                estado="ERROR",
-                detalle=str(e)[:500]
-            )
-            conn.commit()
-        except Exception:
-            pass
-        raise
+        print("❌ Error:", str(e))
+        raise e
 
     finally:
+        cursor.close()
         conn.close()
 
 
