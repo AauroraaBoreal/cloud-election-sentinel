@@ -24,7 +24,7 @@ except Exception:
 # ==========================================================
 # Configuración general
 # ==========================================================
-_ = st.set_page_config(
+_PAGE_CONFIG_RESULT = st.set_page_config(
     page_title="Cloud Election Sentinel",
     page_icon="🗳️",
     layout="wide",
@@ -40,7 +40,7 @@ TEXT_DARK = "#1F2937"
 # ==========================================================
 # Estilos tipo dashboard ONPE
 # ==========================================================
-_ = st.markdown(
+_CSS_RESULT = st.markdown(
     f"""
     <style>
         .main {{
@@ -1642,26 +1642,50 @@ def page_mapa(locations, candidates, votes):
         st.markdown("</div>", unsafe_allow_html=True)
 
 
-def region_modifier_for_simulation(region: str, candidates_count: int) -> np.ndarray:
+def _fit_array(values: list[float], size: int) -> np.ndarray:
+    """Ajusta una lista de pesos a la cantidad real de candidatos."""
+    if size <= 0:
+        return np.array([], dtype=float)
+
+    arr = np.array(values, dtype=float)
+    if len(arr) >= size:
+        arr = arr[:size]
+    else:
+        arr = np.concatenate([arr, np.repeat(1.0, size - len(arr))])
+
+    total = arr.sum()
+    if total <= 0:
+        return np.repeat(1 / size, size)
+    return arr / total
+
+
+def region_modifier_for_simulation(region: str, candidates_count: int, scenario: str = "") -> np.ndarray:
     """
-    Retorna la distribución de votos por región ajustada a la cantidad real de candidatos.
-    Usa la misma lógica base del dashboard, pero evita errores si hay más/menos candidatos.
+    Retorna la distribución simulada por región.
+    La simulación aplica un sesgo visible por escenario para que los sliders sí cambien el resultado.
     """
     if candidates_count <= 0:
         return np.array([], dtype=float)
 
     shares = _region_modifier(region)
-
     if len(shares) >= candidates_count:
         shares = shares[:candidates_count]
     else:
-        extra = np.repeat(1 / candidates_count, candidates_count - len(shares))
-        shares = np.concatenate([shares, extra])
+        shares = np.concatenate([shares, np.repeat(1 / candidates_count, candidates_count - len(shares))])
 
+    # Pesos por escenario. Están alineados al orden de candidate_id ascendente.
+    # Sirven para que el simulador sea pedagógico y muestre variaciones reales en pantalla.
+    if scenario == "Ingreso de actas rurales":
+        boost = _fit_array([0.62, 1.42, 0.82, 1.55, 1.25, 1.15, 1.08], candidates_count)
+    elif scenario == "Retraso en regiones críticas":
+        boost = _fit_array([0.70, 1.32, 0.88, 1.48, 1.22, 1.12, 1.05], candidates_count)
+    else:  # Actualización uniforme del conteo
+        boost = _fit_array([1.03, 1.01, 1.00, 0.99, 0.98, 0.98, 0.97], candidates_count)
+
+    shares = shares * boost
     total = shares.sum()
     if total <= 0:
         return np.repeat(1 / candidates_count, candidates_count)
-
     return shares / total
 
 
@@ -1670,50 +1694,22 @@ def get_target_locations(
     scenario: str,
     rural_intake: int,
     delay_hours: int,
-) -> tuple[pd.DataFrame, float]:
+) -> tuple[pd.DataFrame, float, str]:
     """
-    Selecciona las ubicaciones que entran a la simulación y calcula el factor de actas a ingresar.
+    Selecciona ubicaciones y calcula cuántas actas entran al escenario.
 
-    Importante:
-    - Si la base tiene actas pendientes, usa esas actas.
-    - Si la base está al 100% y no hay pendientes, crea una bolsa referencial para que el simulador
-      sí muestre variación sin modificar Supabase.
+    Si Supabase ya tiene 0 actas pendientes, crea una bolsa referencial basada en total_actas.
+    Esto evita que el simulador quede congelado en el mismo porcentaje.
     """
     if locations.empty:
-        return pd.DataFrame(), 0.0
+        return pd.DataFrame(), 0.0, "Sin ubicaciones disponibles"
 
     target = locations.copy()
 
-    if "actas_pendientes" not in target.columns:
-        target["actas_pendientes"] = 0
-    if "actas_observadas" not in target.columns:
-        target["actas_observadas"] = 0
-    if "total_actas" not in target.columns:
-        target["total_actas"] = 0
-    if "velocidad_actas_hora" not in target.columns:
-        target["velocidad_actas_hora"] = 0
-
     for col in ["actas_pendientes", "actas_observadas", "total_actas", "velocidad_actas_hora"]:
+        if col not in target.columns:
+            target[col] = 0
         target[col] = pd.to_numeric(target[col], errors="coerce").fillna(0)
-
-    # Base real: actas pendientes de la BD.
-    target["sim_pending_actas"] = target["actas_pendientes"].clip(lower=0)
-
-    # Respaldo para datasets que ya están al 100%: usa observadas o una bolsa referencial.
-    # Esto evita que el simulador quede congelado en 0.0% de variación.
-    if float(target["sim_pending_actas"].sum()) <= 0:
-        observed_pool = target["actas_observadas"].clip(lower=0)
-        if float(observed_pool.sum()) > 0:
-            target["sim_pending_actas"] = observed_pool
-        else:
-            target["sim_pending_actas"] = (target["total_actas"] * 0.08).round().clip(lower=1)
-
-    target = target[target["sim_pending_actas"] > 0].copy()
-    if target.empty:
-        return target, 0.0
-
-    intake_factor = max(0, min(float(rural_intake), 100)) / 100
-    delay_factor = max(0, 1 - (max(0, float(delay_hours)) / 24))
 
     rural_regions = [
         "Cusco",
@@ -1724,37 +1720,59 @@ def get_target_locations(
         "Junín",
         "Junin",
         "Cajamarca",
+        "Loreto",
     ]
 
     if scenario == "Ingreso de actas rurales":
-        rural_target = target[target["region"].isin(rural_regions)].copy()
-        if not rural_target.empty:
-            target = rural_target
-        factor = intake_factor
+        subset = target[target["region"].isin(rural_regions)].copy()
+        if not subset.empty:
+            target = subset
+        fallback_rate = 0.38
+        factor = max(0, min(float(rural_intake), 100)) / 100
+        label = "actas rurales proyectadas"
 
     elif scenario == "Retraso en regiones críticas":
         avg_speed = float(target["velocidad_actas_hora"].mean()) if not target.empty else 0
-        if avg_speed > 0:
-            critical_target = target[target["velocidad_actas_hora"] < avg_speed * 0.70].copy()
-        else:
-            critical_target = target.copy()
+        critical = target[target["velocidad_actas_hora"] <= avg_speed].copy() if avg_speed > 0 else target.copy()
 
         if "estado" in target.columns:
-            estado_critico = target[
+            by_status = target[
                 target["estado"].astype(str).str.contains("Retraso|bajo|crítico|critico", case=False, na=False)
             ].copy()
-            critical_target = pd.concat([critical_target, estado_critico]).drop_duplicates()
+            critical = pd.concat([critical, by_status]).drop_duplicates()
 
-        if not critical_target.empty:
-            target = critical_target
+        if not critical.empty:
+            target = critical
 
-        # A mayor retraso, menor ingreso efectivo de actas.
-        factor = intake_factor * delay_factor
+        fallback_rate = 0.42
+        intake_factor = max(0, min(float(rural_intake), 100)) / 100
+        delay_impact = 0.70 + (max(0, min(float(delay_hours), 24)) / 24) * 0.55
+        factor = max(0.10, intake_factor * delay_impact)
+        label = "actas críticas proyectadas"
 
     else:  # Actualización uniforme del conteo
-        factor = intake_factor
+        fallback_rate = 0.25
+        factor = max(0, min(float(rural_intake), 100)) / 100
+        label = "actas proyectadas de actualización uniforme"
 
-    return target, factor
+    # Base real: pendientes. Si la bolsa real es muy pequeña, usa una bolsa referencial
+    # para que el cambio se vea en el gráfico y en las métricas.
+    real_pending = target["actas_pendientes"].clip(lower=0)
+    observed_pool = target["actas_observadas"].clip(lower=0)
+    min_visible_pool = max(float(target["total_actas"].sum()) * 0.05, 1.0)
+
+    if float(real_pending.sum()) >= min_visible_pool:
+        target["sim_pending_actas"] = real_pending
+        source_label = "pendientes reales de Supabase"
+    elif float(observed_pool.sum()) >= min_visible_pool:
+        target["sim_pending_actas"] = observed_pool
+        source_label = "actas observadas como bolsa referencial"
+    else:
+        target["sim_pending_actas"] = (target["total_actas"] * fallback_rate).round().clip(lower=1)
+        source_label = "bolsa referencial porque no hay pendientes suficientes"
+
+    target = target[target["sim_pending_actas"] > 0].copy()
+    return target, factor, f"{label} usando {source_label}"
 
 
 def simulate_result(
@@ -1763,11 +1781,11 @@ def simulate_result(
     scenario: str,
     rural_intake: int,
     delay_hours: int,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, float, str]:
     simulated = summary.copy()
-    simulated["sim_votes"] = simulated["valid_votes"].astype(float)
+    simulated["sim_votes"] = pd.to_numeric(simulated["valid_votes"], errors="coerce").fillna(0).astype(float)
 
-    target_locations, factor = get_target_locations(
+    target_locations, factor, source_label = get_target_locations(
         locations,
         scenario,
         rural_intake,
@@ -1775,23 +1793,25 @@ def simulate_result(
     )
 
     votes_per_acta = 320
-    candidates_count = len(simulated)
+    candidate_ids = sorted(simulated["candidate_id"].dropna().astype(int).unique().tolist())
+    candidates_count = len(candidate_ids)
+    used_actas = 0.0
 
     for _, loc in target_locations.iterrows():
-        pending_actas = float(loc.get("sim_pending_actas", loc.get("actas_pendientes", 0)))
+        pending_actas = float(loc.get("sim_pending_actas", 0))
         new_actas = pending_actas * factor
 
         if new_actas <= 0:
             continue
 
-        shares = region_modifier_for_simulation(str(loc["region"]), candidates_count)
+        used_actas += new_actas
+        shares = region_modifier_for_simulation(str(loc.get("region", "")), candidates_count, scenario)
 
-        for idx, candidate_id in enumerate(simulated["candidate_id"].tolist()):
+        for idx, candidate_id in enumerate(candidate_ids):
             extra_votes = new_actas * votes_per_acta * shares[idx]
-            simulated.loc[simulated["candidate_id"] == candidate_id, "sim_votes"] += extra_votes
+            simulated.loc[simulated["candidate_id"].astype(int) == candidate_id, "sim_votes"] += extra_votes
 
     total_sim_votes = simulated["sim_votes"].sum()
-
     simulated["sim_percentage"] = np.where(
         total_sim_votes > 0,
         simulated["sim_votes"] / total_sim_votes * 100,
@@ -1799,9 +1819,11 @@ def simulate_result(
     )
 
     simulated["sim_votes"] = simulated["sim_votes"].round().astype(int)
+    simulated = simulated.sort_values("sim_percentage", ascending=False).reset_index(drop=True)
 
-    return simulated.sort_values("sim_percentage", ascending=False)
- 
+    return simulated, used_actas, source_label
+
+
 def page_simulador(candidates, locations, votes):
     if not _has_columns(locations, ["location_id"]) or not _has_columns(candidates, ["candidate_id"]) or not _has_columns(votes, ["location_id", "candidate_id", "valid_votes"]):
         st.warning("No hay datos completos para simular escenarios. Verifica la conexión a Supabase.")
@@ -1809,80 +1831,83 @@ def page_simulador(candidates, locations, votes):
 
     data = joined_results(candidates, locations, votes)
     summary = candidate_summary(data)
- 
+
     st.markdown("## Simulador de escenarios")
     st.caption("Analiza cómo podrían cambiar los resultados según el ingreso de actas pendientes o rurales.")
- 
-    left, right = st.columns([1, 1.25])
-    with left:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        scenario = st.selectbox(
-            "Escenario",
-            [
-                "Ingreso de actas rurales",
-                "Retraso en regiones críticas",
-                "Actualización uniforme del conteo",
-            ],
-        )
-        rural_intake = st.slider("Porcentaje de actas rurales ingresadas", 0, 100, 50, 5)
-        delay_hours = st.slider("Retraso en regiones críticas (horas)", 0, 24, 6, 1)
- 
-        run = st.button("▶ Ejecutar simulación", type="primary", use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
 
     if summary.empty:
         st.warning("No hay resultados electorales disponibles para ejecutar la simulación.")
         return
 
-    simulated = simulate_result(summary, locations, scenario, rural_intake, delay_hours)
+    left, right = st.columns([1, 1.25])
+
+    with left:
+        with st.container(border=True):
+            scenario = st.selectbox(
+                "Escenario",
+                [
+                    "Ingreso de actas rurales",
+                    "Retraso en regiones críticas",
+                    "Actualización uniforme del conteo",
+                ],
+            )
+            rural_intake = st.slider("Porcentaje de actas ingresadas al escenario", 0, 100, 50, 5)
+            delay_hours = st.slider("Retraso en regiones críticas (horas)", 0, 24, 6, 1)
+            run = st.button("▶ Ejecutar simulación", type="primary", use_container_width=True)
+
+    simulated, used_actas, source_label = simulate_result(summary, locations, scenario, rural_intake, delay_hours)
     current_leader = summary.iloc[0]
     simulated_leader = simulated.iloc[0]
-    difference = simulated_leader["sim_percentage"] - current_leader["percentage"]
+    difference = float(simulated_leader["sim_percentage"] - current_leader["percentage"])
     confidence = max(55, min(95, 86 - abs(difference) * 4 - delay_hours * 0.4))
- 
+
     if run:
-        insert_log("Simulación", "Escenario ejecutado", f"{scenario}: rural={rural_intake}%, retraso={delay_hours}h")
-        # Forzar recarga de datos en el siguiente ciclo
+        insert_log(
+            "Simulación",
+            "Escenario ejecutado",
+            f"{scenario}: ingreso={rural_intake}%, retraso={delay_hours}h, actas proyectadas={used_actas:.0f}",
+        )
         st.session_state.pop("data_cache", None)
         st.session_state.pop("data_cache_ts", None)
- 
+
     with right:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown("### Resultado de la simulación")
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Resultado actual", f"{current_leader['percentage']:.1f}%", current_leader["party_name"])
-        m2.metric("Resultado simulado", f"{simulated_leader['sim_percentage']:.1f}%", simulated_leader["party_name"])
-        m3.metric("Diferencia", f"{difference:+.1f}%", "Variación del líder")
-        m4.metric("Nivel de confianza", f"{confidence:.0f}%", "Escenario")
- 
-        fig = px.bar(
-            simulated,
-            x="party_name",
-            y="sim_percentage",
-            text=simulated["sim_percentage"].map(lambda x: f"{x:.1f}%"),
-            color="party_name",
-            color_discrete_sequence=simulated["display_color"].tolist(),
-        )
-        fig.update_layout(
-            height=300,
-            showlegend=False,
-            margin=dict(l=10, r=10, t=15, b=10),
-            yaxis_title="% simulado",
-            xaxis_title="",
-            plot_bgcolor="white",
-            paper_bgcolor="white",
-        )
-        fig.update_traces(textposition="outside", cliponaxis=False)
-        st.plotly_chart(fig, use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
- 
+        with st.container(border=True):
+            st.markdown("### Resultado de la simulación")
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Resultado actual", f"{current_leader['percentage']:.1f}%", current_leader["party_name"])
+            m2.metric("Resultado simulado", f"{simulated_leader['sim_percentage']:.1f}%", simulated_leader["party_name"])
+            m3.metric("Diferencia", f"{difference:+.1f} pp", "Variación del líder")
+            m4.metric("Nivel de confianza", f"{confidence:.0f}%", "Escenario")
+
+            st.caption(f"Actas usadas en el escenario: {format_int(used_actas)} · {source_label}.")
+
+            fig = px.bar(
+                simulated,
+                x="party_name",
+                y="sim_percentage",
+                text=simulated["sim_percentage"].map(lambda x: f"{x:.1f}%"),
+                color="party_name",
+                color_discrete_sequence=simulated["display_color"].tolist(),
+            )
+            fig.update_layout(
+                height=330,
+                showlegend=False,
+                margin=dict(l=10, r=10, t=15, b=10),
+                yaxis_title="% simulado",
+                xaxis_title="",
+                plot_bgcolor="white",
+                paper_bgcolor="white",
+            )
+            fig.update_traces(textposition="outside", cliponaxis=False)
+            st.plotly_chart(fig, use_container_width=True)
+
     st.write("")
     st.markdown(
-        "<div class='small-note'>Nota: los resultados simulados son referenciales y se calculan mediante reglas de escenario, no mediante IA.</div>",
+        "<div class='small-note'>Nota: los resultados simulados son referenciales. Si no existen actas pendientes en Supabase, el simulador usa una bolsa proyectada para que los escenarios se puedan comparar.</div>",
         unsafe_allow_html=True,
     )
- 
- 
+
+
 def page_reportes(candidates, locations, votes):
     if not _has_columns(locations, ["location_id"]) or not _has_columns(candidates, ["candidate_id"]) or not _has_columns(votes, ["location_id", "candidate_id"]):
         st.warning("No hay datos completos para generar reportes. Verifica la conexión a Supabase.")
@@ -1991,4 +2016,4 @@ def main():
  
  
 if __name__ == "__main__":
-    _ = main()
+    _APP_RESULT = main()
