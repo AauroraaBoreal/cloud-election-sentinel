@@ -20,23 +20,69 @@ import psycopg2
 # Debes pasarlas desde Databricks en el campo Parameters
 # o como variables de entorno.
 #
-# Si usas POOLER de Supabase, el usuario debe ser:
-# postgres.TU_PROJECT_REF
 
 def get_args():
+    """
+    Lee credenciales desde:
+    1. Parameters de Databricks Notebook usando dbutils.widgets
+    2. Argumentos tipo consola usando argparse
+    3. Variables de entorno
+    """
+
+    def get_widget_value(name: str, default: str = "") -> str:
+        try:
+            return dbutils.widgets.get(name)
+        except Exception:
+            return default
+
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--postgres_user", default=os.getenv("POSTGRES_USER", ""))
-    parser.add_argument("--postgres_password", default=os.getenv("POSTGRES_PASSWORD", ""))
-    parser.add_argument("--postgres_host", default=os.getenv("POSTGRES_HOST", "aws-1-us-east-1.pooler.supabase.com"))
-    parser.add_argument("--postgres_port", default=os.getenv("POSTGRES_PORT", "6543"))
-    parser.add_argument("--postgres_dbname", default=os.getenv("POSTGRES_DBNAME", "postgres"))
-    parser.add_argument("--force_run", default=os.getenv("FORCE_RUN", "true"))
+    parser.add_argument("--postgres_user", default="")
+    parser.add_argument("--postgres_password", default="")
+    parser.add_argument("--postgres_host", default="")
+    parser.add_argument("--postgres_port", default="")
+    parser.add_argument("--postgres_dbname", default="")
+    parser.add_argument("--force_run", default="")
 
-    args, _ = parser.parse_known_args()
-    return args
+    cli_args, _ = parser.parse_known_args()
 
+    cli_args.postgres_user = (
+        get_widget_value("postgres_user")
+        or cli_args.postgres_user
+        or os.getenv("POSTGRES_USER", "")
+    )
 
+    cli_args.postgres_password = (
+        get_widget_value("postgres_password")
+        or cli_args.postgres_password
+        or os.getenv("POSTGRES_PASSWORD", "")
+    )
+
+    cli_args.postgres_host = (
+        get_widget_value("postgres_host")
+        or cli_args.postgres_host
+        or os.getenv("POSTGRES_HOST", "aws-1-us-east-1.pooler.supabase.com")
+    )
+
+    cli_args.postgres_port = (
+        get_widget_value("postgres_port")
+        or cli_args.postgres_port
+        or os.getenv("POSTGRES_PORT", "6543")
+    )
+
+    cli_args.postgres_dbname = (
+        get_widget_value("postgres_dbname")
+        or cli_args.postgres_dbname
+        or os.getenv("POSTGRES_DBNAME", "postgres")
+    )
+
+    cli_args.force_run = (
+        get_widget_value("force_run")
+        or cli_args.force_run
+        or os.getenv("FORCE_RUN", "true")
+    )
+
+    return cli_args
 args = get_args()
 
 POSTGRES_USER = args.postgres_user
