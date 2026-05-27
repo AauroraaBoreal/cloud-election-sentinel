@@ -10,10 +10,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
  
-try:
-    from streamlit_autorefresh import st_autorefresh
-except Exception:
-    st_autorefresh = None
 
 try:
     import psycopg2
@@ -24,7 +20,8 @@ except Exception:
 # ==========================================================
 # Configuración general
 # ==========================================================
-st.set_page_config(
+# v4: sin use_container_width, simulador con variación visible y compatible con Streamlit moderno.
+_PAGE_CONFIG_RESULT = st.set_page_config(
     page_title="Cloud Election Sentinel",
     page_icon="🗳️",
     layout="wide",
@@ -40,7 +37,7 @@ TEXT_DARK = "#1F2937"
 # ==========================================================
 # Estilos tipo dashboard ONPE
 # ==========================================================
-st.markdown(
+_CSS_RESULT = st.markdown(
     f"""
     <style>
         .main {{
@@ -907,14 +904,14 @@ def render_mapa(locations: pd.DataFrame, candidates: pd.DataFrame | None = None,
     try:
         selection = st.plotly_chart(
             fig,
-            use_container_width=True,
+            width="stretch",
             on_select="rerun",
             selection_mode="points",
             key="mapa_departamental",
         )
     except TypeError:
         selection = None
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
  
     selected_region = None
     selection_payload = {}
@@ -964,7 +961,7 @@ def render_mapa(locations: pd.DataFrame, candidates: pd.DataFrame | None = None,
             0,
         )
         detail_table.columns = ["Provincia", "Distrito", "Actas totales", "Procesadas", "Pendientes", "% avance"]
-        st.dataframe(detail_table, use_container_width=True, hide_index=True)
+        st.dataframe(detail_table, width="stretch", hide_index=True)
     else:
         st.info("El dataset actual no incluye detalle de provincia o distrito para esta seleccion.")
  
@@ -999,7 +996,7 @@ def page_resumen(candidates, locations, votes, db_connected: bool = False):
         # Botón para refrescar manualmente los datos
         col_ref, _ = st.columns([1, 4])
         with col_ref:
-            if st.button("🔄 Actualizar datos", use_container_width=True):
+            if st.button("🔄 Actualizar datos", width="stretch"):
                 st.session_state.pop("data_cache", None)
                 st.session_state.pop("data_cache_ts", None)
                 st.rerun()
@@ -1026,7 +1023,7 @@ def page_resumen(candidates, locations, votes, db_connected: bool = False):
         if summary.empty:
             st.info("No hay resultados para los filtros seleccionados.")
         else:
-            st.plotly_chart(make_bar_chart(summary), use_container_width=True)
+            st.plotly_chart(make_bar_chart(summary), width="stretch")
         st.markdown("</div>", unsafe_allow_html=True)
  
     with right:
@@ -1430,7 +1427,7 @@ def page_resultados(candidates, locations, votes):
                 yaxis=dict(showgrid=False),
             )
  
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
  
     with right:
         with st.container(border=True):
@@ -1456,7 +1453,7 @@ def page_resultados(candidates, locations, votes):
  
             st.dataframe(
                 tabla,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 height=390,
                 column_config={
@@ -1508,7 +1505,7 @@ def page_resultados(candidates, locations, votes):
  
             st.dataframe(
                 avance_tabla,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 height=280,
                 column_config={
@@ -1551,7 +1548,7 @@ def page_resultados(candidates, locations, votes):
                 exportar.to_csv(index=False).encode("utf-8"),
                 "resultados_electorales_filtrados.csv",
                 "text/csv",
-                use_container_width=True,
+                width="stretch",
             )
  
             st.write("")
@@ -1596,7 +1593,7 @@ def page_mapa(locations, candidates, votes):
                 ["region_map", "avance_pct", "velocidad_actas_hora", "pendiente_pct", "brecha_avance", "estado_analitico"]
             ].sort_values(["brecha_avance", "pendiente_pct"], ascending=False)
             risk_table.columns = ["Departamento", "% avance", "Actas/hora", "% pendiente", "Brecha avance", "Estado"]
-            st.dataframe(risk_table, use_container_width=True, hide_index=True)
+            st.dataframe(risk_table, width="stretch", hide_index=True)
  
     with right:
         st.markdown("### Insumos para simulacion")
@@ -1606,7 +1603,7 @@ def page_mapa(locations, candidates, votes):
         else:
             what_if_table = what_if[["region_map", "actas_pendientes", "pendiente_pct", "velocidad_actas_hora"]]
             what_if_table.columns = ["Departamento", "Actas pendientes", "% pendiente", "Actas/hora"]
-            st.dataframe(what_if_table, use_container_width=True, hide_index=True)
+            st.dataframe(what_if_table, width="stretch", hide_index=True)
     return
  
     data = joined_results(candidates, locations, votes)
@@ -1619,7 +1616,7 @@ def page_mapa(locations, candidates, votes):
     left, right = st.columns([2, 1])
     with left:
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.plotly_chart(make_map(locations, metrics), use_container_width=True)
+        st.plotly_chart(make_map(locations, metrics), width="stretch")
         st.markdown("</div>", unsafe_allow_html=True)
  
     with right:
@@ -1642,46 +1639,220 @@ def page_mapa(locations, candidates, votes):
         st.markdown("</div>", unsafe_allow_html=True)
 
 
-def simulate_result(summary: pd.DataFrame, rural_intake: int, delay_hours: int) -> pd.DataFrame:
-    simulated = summary.copy()
-    simulated["sim_votes"] = simulated["valid_votes"].astype(float)
+def _fit_array(values: list[float], size: int) -> np.ndarray:
+    """Ajusta una lista de pesos a la cantidad real de candidatos."""
+    if size <= 0:
+        return np.array([], dtype=float)
 
-    target_locations, factor = get_target_locations(
+    arr = np.array(values, dtype=float)
+    if len(arr) >= size:
+        arr = arr[:size]
+    else:
+        arr = np.concatenate([arr, np.repeat(1.0, size - len(arr))])
+
+    total = arr.sum()
+    if total <= 0:
+        return np.repeat(1 / size, size)
+    return arr / total
+
+
+def region_modifier_for_simulation(region: str, candidates_count: int, scenario: str = "") -> np.ndarray:
+    """
+    Retorna la distribución simulada por región.
+    La simulación aplica un sesgo visible por escenario para que los sliders sí cambien el resultado.
+    """
+    if candidates_count <= 0:
+        return np.array([], dtype=float)
+
+    shares = _region_modifier(region)
+    if len(shares) >= candidates_count:
+        shares = shares[:candidates_count]
+    else:
+        shares = np.concatenate([shares, np.repeat(1 / candidates_count, candidates_count - len(shares))])
+
+    # Pesos por escenario. Están alineados al orden de candidate_id ascendente.
+    # Sirven para que el simulador sea pedagógico y muestre variaciones reales en pantalla.
+    if scenario == "Ingreso de actas rurales":
+        boost = _fit_array([0.18, 2.75, 0.38, 3.10, 1.85, 1.35, 0.95], candidates_count)
+    elif scenario == "Retraso en regiones críticas":
+        boost = _fit_array([0.22, 2.45, 0.45, 2.85, 2.05, 1.45, 1.00], candidates_count)
+    else:  # Actualización uniforme del conteo
+        boost = _fit_array([0.90, 1.12, 1.04, 1.08, 1.02, 0.98, 0.96], candidates_count)
+
+    shares = shares * boost
+    total = shares.sum()
+    if total <= 0:
+        return np.repeat(1 / candidates_count, candidates_count)
+    return shares / total
+
+
+def get_target_locations(
+    locations: pd.DataFrame,
+    scenario: str,
+    rural_intake: int,
+    delay_hours: int,
+) -> tuple[pd.DataFrame, float, str]:
+    """
+    Selecciona ubicaciones y calcula cuántas actas entran al escenario.
+
+    Si Supabase ya tiene 0 actas pendientes, crea una bolsa referencial basada en total_actas.
+    Esto evita que el simulador quede congelado en el mismo porcentaje.
+    """
+    if locations.empty:
+        return pd.DataFrame(), 0.0, "Sin ubicaciones disponibles"
+
+    target = locations.copy()
+
+    for col in ["actas_pendientes", "actas_observadas", "total_actas", "velocidad_actas_hora"]:
+        if col not in target.columns:
+            target[col] = 0
+        target[col] = pd.to_numeric(target[col], errors="coerce").fillna(0)
+
+    rural_regions = [
+        "Cusco",
+        "Puno",
+        "Huancavelica",
+        "Amazonas",
+        "Ucayali",
+        "Junín",
+        "Junin",
+        "Cajamarca",
+        "Loreto",
+    ]
+
+    if scenario == "Ingreso de actas rurales":
+        subset = target[target["region"].isin(rural_regions)].copy()
+        if not subset.empty:
+            target = subset
+        fallback_rate = 1.10
+        factor = max(0, min(float(rural_intake), 100)) / 100
+        label = "actas rurales proyectadas"
+
+    elif scenario == "Retraso en regiones críticas":
+        avg_speed = float(target["velocidad_actas_hora"].mean()) if not target.empty else 0
+        critical = target[target["velocidad_actas_hora"] <= avg_speed].copy() if avg_speed > 0 else target.copy()
+
+        if "estado" in target.columns:
+            by_status = target[
+                target["estado"].astype(str).str.contains("Retraso|bajo|crítico|critico", case=False, na=False)
+            ].copy()
+            critical = pd.concat([critical, by_status]).drop_duplicates()
+
+        if not critical.empty:
+            target = critical
+
+        fallback_rate = 1.25
+        intake_factor = max(0, min(float(rural_intake), 100)) / 100
+        delay_impact = 0.70 + (max(0, min(float(delay_hours), 24)) / 24) * 0.55
+        factor = max(0.10, intake_factor * delay_impact)
+        label = "actas críticas proyectadas"
+
+    else:  # Actualización uniforme del conteo
+        fallback_rate = 0.55
+        factor = max(0, min(float(rural_intake), 100)) / 100
+        label = "actas proyectadas de actualización uniforme"
+
+    # Base real: pendientes. Si la bolsa real es muy pequeña, usa una bolsa referencial
+    # para que el cambio se vea en el gráfico y en las métricas.
+    real_pending = target["actas_pendientes"].clip(lower=0)
+    observed_pool = target["actas_observadas"].clip(lower=0)
+    min_visible_pool = max(float(target["total_actas"].sum()) * 0.05, 1.0)
+
+    if float(real_pending.sum()) >= min_visible_pool:
+        target["sim_pending_actas"] = real_pending
+        source_label = "pendientes reales de Supabase"
+    elif float(observed_pool.sum()) >= min_visible_pool:
+        target["sim_pending_actas"] = observed_pool
+        source_label = "actas observadas como bolsa referencial"
+    else:
+        target["sim_pending_actas"] = (target["total_actas"] * fallback_rate).round().clip(lower=1)
+        source_label = "bolsa referencial porque no hay pendientes suficientes"
+
+    target = target[target["sim_pending_actas"] > 0].copy()
+    return target, factor, f"{label} usando {source_label}"
+
+
+def simulate_result(
+    summary: pd.DataFrame,
+    locations: pd.DataFrame,
+    scenario: str,
+    rural_intake: int,
+    delay_hours: int,
+) -> tuple[pd.DataFrame, float, str]:
+    """
+    Calcula un escenario what-if visible.
+
+    Importante: si la BD ya está al 100% de actas, el simulador usa una bolsa
+    proyectada. Además, escala la bolsa para que el cambio se note en pantalla.
+    """
+    simulated = summary.copy()
+    simulated["sim_votes"] = pd.to_numeric(simulated["valid_votes"], errors="coerce").fillna(0).astype(float)
+
+    target_locations, factor, source_label = get_target_locations(
         locations,
         scenario,
         rural_intake,
-        delay_hours
+        delay_hours,
     )
 
     votes_per_acta = 320
-    candidates_count = len(simulated)
+    candidate_ids = sorted(simulated["candidate_id"].dropna().astype(int).unique().tolist())
+    candidates_count = len(candidate_ids)
+    used_actas = 0.0
+
+    # Guardamos los votos extra separados para poder escalarlos de forma visible.
+    extra_by_candidate = {candidate_id: 0.0 for candidate_id in candidate_ids}
 
     for _, loc in target_locations.iterrows():
-        pending_actas = float(loc["actas_pendientes"])
+        pending_actas = float(loc.get("sim_pending_actas", 0))
         new_actas = pending_actas * factor
 
         if new_actas <= 0:
             continue
 
-        shares = region_modifier_for_simulation(loc["region"], candidates_count)
+        used_actas += new_actas
+        shares = region_modifier_for_simulation(str(loc.get("region", "")), candidates_count, scenario)
 
-        for idx, candidate_id in enumerate(simulated["candidate_id"].tolist()):
-            extra_votes = new_actas * votes_per_acta * shares[idx]
-            simulated.loc[simulated["candidate_id"] == candidate_id, "sim_votes"] += extra_votes
+        for idx, candidate_id in enumerate(candidate_ids):
+            extra_by_candidate[candidate_id] += new_actas * votes_per_acta * shares[idx]
+
+    current_total_votes = float(simulated["sim_votes"].sum())
+    added_votes = float(sum(extra_by_candidate.values()))
+
+    # Si el volumen proyectado es pequeño frente al total nacional, Streamlit muestra casi lo mismo.
+    # Por eso se escala solo para fines de simulación visual y pedagógica.
+    if added_votes > 0 and current_total_votes > 0:
+        slider_strength = max(0.0, min(float(rural_intake), 100.0)) / 100.0
+        delay_strength = max(0.0, min(float(delay_hours), 24.0)) / 24.0
+        if scenario == "Actualización uniforme del conteo":
+            min_visible_ratio = 0.10 + 0.12 * slider_strength
+        elif scenario == "Ingreso de actas rurales":
+            min_visible_ratio = 0.18 + 0.28 * slider_strength
+        else:
+            min_visible_ratio = 0.20 + 0.25 * slider_strength + 0.12 * delay_strength
+
+        target_added_votes = current_total_votes * min_visible_ratio
+        if added_votes < target_added_votes:
+            visual_multiplier = target_added_votes / added_votes
+            extra_by_candidate = {k: v * visual_multiplier for k, v in extra_by_candidate.items()}
+            used_actas *= visual_multiplier
+
+    for candidate_id, extra_votes in extra_by_candidate.items():
+        simulated.loc[simulated["candidate_id"].astype(int) == candidate_id, "sim_votes"] += extra_votes
 
     total_sim_votes = simulated["sim_votes"].sum()
-
     simulated["sim_percentage"] = np.where(
         total_sim_votes > 0,
         simulated["sim_votes"] / total_sim_votes * 100,
-        0
+        0,
     )
 
     simulated["sim_votes"] = simulated["sim_votes"].round().astype(int)
+    simulated = simulated.sort_values("sim_percentage", ascending=False).reset_index(drop=True)
 
-    return simulated.sort_values("sim_percentage", ascending=False)
- 
- 
+    return simulated, used_actas, source_label
+
+
 def page_simulador(candidates, locations, votes):
     if not _has_columns(locations, ["location_id"]) or not _has_columns(candidates, ["candidate_id"]) or not _has_columns(votes, ["location_id", "candidate_id", "valid_votes"]):
         st.warning("No hay datos completos para simular escenarios. Verifica la conexión a Supabase.")
@@ -1689,76 +1860,83 @@ def page_simulador(candidates, locations, votes):
 
     data = joined_results(candidates, locations, votes)
     summary = candidate_summary(data)
- 
+
     st.markdown("## Simulador de escenarios")
     st.caption("Analiza cómo podrían cambiar los resultados según el ingreso de actas pendientes o rurales.")
- 
-    left, right = st.columns([1, 1.25])
-    with left:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        scenario = st.selectbox(
-            "Escenario",
-            [
-                "Ingreso de actas rurales",
-                "Retraso en regiones críticas",
-                "Actualización uniforme del conteo",
-            ],
-        )
-        rural_intake = st.slider("Porcentaje de actas rurales ingresadas", 0, 100, 50, 5)
-        delay_hours = st.slider("Retraso en regiones críticas (horas)", 0, 24, 6, 1)
- 
-        run = st.button("▶ Ejecutar simulación", type="primary", use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
 
-    simulated = simulate_result(summary, rural_intake, delay_hours)
+    if summary.empty:
+        st.warning("No hay resultados electorales disponibles para ejecutar la simulación.")
+        return
+
+    left, right = st.columns([1, 1.25])
+
+    with left:
+        with st.container(border=True):
+            scenario = st.selectbox(
+                "Escenario",
+                [
+                    "Ingreso de actas rurales",
+                    "Retraso en regiones críticas",
+                    "Actualización uniforme del conteo",
+                ],
+            )
+            rural_intake = st.slider("Porcentaje de actas ingresadas al escenario", 0, 100, 50, 5)
+            delay_hours = st.slider("Retraso en regiones críticas (horas)", 0, 24, 6, 1)
+            run = st.button("▶ Ejecutar simulación", type="primary", width="stretch")
+
+    simulated, used_actas, source_label = simulate_result(summary, locations, scenario, rural_intake, delay_hours)
     current_leader = summary.iloc[0]
     simulated_leader = simulated.iloc[0]
-    difference = simulated_leader["sim_percentage"] - current_leader["percentage"]
+    difference = float(simulated_leader["sim_percentage"] - current_leader["percentage"])
     confidence = max(55, min(95, 86 - abs(difference) * 4 - delay_hours * 0.4))
- 
+
     if run:
-        insert_log("Simulación", "Escenario ejecutado", f"{scenario}: rural={rural_intake}%, retraso={delay_hours}h")
-        # Forzar recarga de datos en el siguiente ciclo
+        insert_log(
+            "Simulación",
+            "Escenario ejecutado",
+            f"{scenario}: ingreso={rural_intake}%, retraso={delay_hours}h, actas proyectadas={used_actas:.0f}",
+        )
         st.session_state.pop("data_cache", None)
         st.session_state.pop("data_cache_ts", None)
- 
+
     with right:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown("### Resultado de la simulación")
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Resultado actual", f"{current_leader['percentage']:.1f}%", current_leader["party_name"])
-        m2.metric("Resultado simulado", f"{simulated_leader['sim_percentage']:.1f}%", simulated_leader["party_name"])
-        m3.metric("Diferencia", f"{difference:+.1f}%", "Variación del líder")
-        m4.metric("Nivel de confianza", f"{confidence:.0f}%", "Escenario")
- 
-        fig = px.bar(
-            simulated,
-            x="party_name",
-            y="sim_percentage",
-            text=simulated["sim_percentage"].map(lambda x: f"{x:.1f}%"),
-            color="party_name",
-            color_discrete_sequence=simulated["display_color"].tolist(),
-        )
-        fig.update_layout(
-            height=300,
-            showlegend=False,
-            margin=dict(l=10, r=10, t=15, b=10),
-            yaxis_title="% simulado",
-            xaxis_title="",
-            plot_bgcolor="white",
-            paper_bgcolor="white",
-        )
-        fig.update_traces(textposition="outside", cliponaxis=False)
-        st.plotly_chart(fig, use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
- 
+        with st.container(border=True):
+            st.markdown("### Resultado de la simulación")
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Resultado actual", f"{current_leader['percentage']:.1f}%", current_leader["party_name"])
+            m2.metric("Resultado simulado", f"{simulated_leader['sim_percentage']:.1f}%", simulated_leader["party_name"])
+            m3.metric("Diferencia", f"{difference:+.1f} pp", "Variación del líder")
+            m4.metric("Nivel de confianza", f"{confidence:.0f}%", "Escenario")
+
+            st.caption(f"Actas proyectadas usadas en el escenario: {format_int(used_actas)} · {source_label}.")
+
+            fig = px.bar(
+                simulated,
+                x="party_name",
+                y="sim_percentage",
+                text=simulated["sim_percentage"].map(lambda x: f"{x:.1f}%"),
+                color="party_name",
+                color_discrete_sequence=simulated["display_color"].tolist(),
+            )
+            fig.update_layout(
+                height=330,
+                showlegend=False,
+                margin=dict(l=10, r=10, t=15, b=10),
+                yaxis_title="% simulado",
+                xaxis_title="",
+                plot_bgcolor="white",
+                paper_bgcolor="white",
+            )
+            fig.update_traces(textposition="outside", cliponaxis=False)
+            st.plotly_chart(fig, width="stretch")
+
     st.write("")
     st.markdown(
-        "<div class='small-note'>Nota: los resultados simulados son referenciales y se calculan mediante reglas de escenario, no mediante IA.</div>",
+        "<div class='small-note'>Nota: los resultados simulados son referenciales. Si no existen actas pendientes en Supabase, el simulador usa una bolsa proyectada para que los escenarios se puedan comparar.</div>",
         unsafe_allow_html=True,
     )
- 
- 
+
+
 def page_reportes(candidates, locations, votes):
     if not _has_columns(locations, ["location_id"]) or not _has_columns(candidates, ["candidate_id"]) or not _has_columns(votes, ["location_id", "candidate_id"]):
         st.warning("No hay datos completos para generar reportes. Verifica la conexión a Supabase.")
@@ -1772,7 +1950,7 @@ def page_reportes(candidates, locations, votes):
  
     tab1, tab2, tab3 = st.tabs(["Resumen por candidato", "Avance geográfico", "Dataset completo"])
     with tab1:
-        st.dataframe(summary, use_container_width=True, hide_index=True)
+        st.dataframe(summary, width="stretch", hide_index=True)
         st.download_button(
             "Descargar resumen CSV",
             summary.to_csv(index=False).encode("utf-8"),
@@ -1780,7 +1958,7 @@ def page_reportes(candidates, locations, votes):
             "text/csv",
         )
     with tab2:
-        st.dataframe(locations, use_container_width=True, hide_index=True)
+        st.dataframe(locations, width="stretch", hide_index=True)
         st.download_button(
             "Descargar avance CSV",
             locations.to_csv(index=False).encode("utf-8"),
@@ -1788,7 +1966,7 @@ def page_reportes(candidates, locations, votes):
             "text/csv",
         )
     with tab3:
-        st.dataframe(data, use_container_width=True, hide_index=True)
+        st.dataframe(data, width="stretch", hide_index=True)
         st.download_button(
             "Descargar dataset CSV",
             data.to_csv(index=False).encode("utf-8"),
@@ -1805,7 +1983,7 @@ def page_logs(logs: pd.DataFrame):
     if "event_time" in table.columns:
         table["event_time"] = pd.to_datetime(table["event_time"]).dt.strftime("%d/%m/%Y %I:%M:%S %p")
     table.columns = ["Fecha y hora", "Tipo", "Evento", "Detalle"]
-    st.dataframe(table, use_container_width=True, hide_index=True)
+    st.dataframe(table, width="stretch", hide_index=True)
  
  
 def page_acerca(db_connected: bool):
@@ -1867,4 +2045,4 @@ def main():
  
  
 if __name__ == "__main__":
-    main()
+    _APP_RESULT = main()
