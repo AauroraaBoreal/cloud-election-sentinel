@@ -101,7 +101,7 @@ def main():
     ddl = Path("ddl.sql").read_text(encoding="utf-8")
     cur.execute(ddl)
 
-    cur.execute("TRUNCATE vote_results, locations, candidates, event_logs RESTART IDENTITY CASCADE;")
+    # cur.execute("TRUNCATE vote_results, locations, candidates, event_logs RESTART IDENTITY CASCADE;")
 
     for name, party, symbol, color in CANDIDATES:
         cur.execute(
