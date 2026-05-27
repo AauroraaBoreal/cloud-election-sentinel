@@ -7,60 +7,25 @@
 # SIN argparse, SIN pandas, SIN numpy, SIN toml
 # ============================================================
 
-import os
 import random
 from datetime import datetime, timezone
 import psycopg2
 
 
 # ============================================================
-# 1. CREDENCIALES SEGURAS
-# Lee desde dbutils.widgets (Databricks) o variables de entorno.
-# Configura los widgets en: Job > Parameters con los nombres:
-#   postgres_user, postgres_password, postgres_host,
-#   postgres_port, postgres_dbname, force_run
+# 1. CREDENCIALES — hardcodeadas para ejecución inmediata
+# TODO: mover a dbutils.widgets o variables de entorno del cluster
 # ============================================================
 
-def get_widget(name: str, default: str = "") -> str:
-    """Lee un widget de Databricks. Si no existe, retorna el default."""
-    try:
-        return dbutils.widgets.get(name)  # noqa: F821  (dbutils es nativo de Databricks)
-    except Exception:
-        return default
+POSTGRES_USER     = "postgres.nrtgdkhlyueerektkofu"
+POSTGRES_PASSWORD = "!Duquecito2021"
+POSTGRES_HOST     = "aws-1-us-east-1.pooler.supabase.com"
+POSTGRES_PORT     = "6543"
+POSTGRES_DBNAME   = "postgres"
 
-
-POSTGRES_USER = (
-    get_widget("postgres_user")
-    or os.getenv("POSTGRES_USER", "")
-)
-POSTGRES_PASSWORD = (
-    get_widget("postgres_password")
-    or os.getenv("POSTGRES_PASSWORD", "")
-)
-POSTGRES_HOST = (
-    get_widget("postgres_host")
-    or os.getenv("POSTGRES_HOST", "aws-0-us-east-1.pooler.supabase.com")
-)
-POSTGRES_PORT = (
-    get_widget("postgres_port")
-    or os.getenv("POSTGRES_PORT", "6543")
-)
-POSTGRES_DBNAME = (
-    get_widget("postgres_dbname")
-    or os.getenv("POSTGRES_DBNAME", "postgres")
-)
-
-# force_run = "true"  → siempre ejecuta aunque ya haya corrido en este bloque de 15 min.
-# force_run = "false" → modo producción, previene duplicados.
-FORCE_RUN = str(
-    get_widget("force_run") or os.getenv("FORCE_RUN", "false")
-).lower() == "true"
-
-if not POSTGRES_USER or not POSTGRES_PASSWORD or not POSTGRES_HOST:
-    raise RuntimeError(
-        "Faltan credenciales. Configura postgres_user, postgres_password "
-        "y postgres_host en los Parameters del Job de Databricks."
-    )
+# True  → corre siempre (para pruebas manuales)
+# False → modo producción, no duplica dentro del mismo bloque de 15 min
+FORCE_RUN = True
 
 
 # ============================================================
