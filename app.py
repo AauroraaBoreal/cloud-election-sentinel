@@ -11,6 +11,11 @@ import plotly.graph_objects as go
 import streamlit as st
  
 try:
+    from streamlit_autorefresh import st_autorefresh
+except Exception:
+    st_autorefresh = None
+
+try:
     import psycopg2
 except Exception:
     psycopg2 = None
@@ -200,8 +205,10 @@ def get_connection():
  
 def read_sql(query: str, params: Optional[Tuple] = None) -> Optional[pd.DataFrame]:
     conn = get_connection()
+
     if conn is None:
         return None
+
     try:
         df = pd.read_sql_query(query, conn, params=params)
         return df
@@ -232,19 +239,23 @@ def _validate_supabase_schema(candidates: pd.DataFrame, locations: pd.DataFrame,
  
 
 def insert_log(event_type: str, event_name: str, detail: str) -> None:
+    """
+    Guarda logs desde Streamlit en la tabla nueva ces_logs.
+    """
     conn = get_connection()
+
     if conn is None:
         return
+
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO event_logs (event_type, event_name, detail)
+                INSERT INTO ces_logs (tipo, evento, detalle)
                 VALUES (%s, %s, %s)
                 """,
                 (event_type, event_name, detail),
             )
-        conn.commit()
     except Exception:
         try:
             conn.rollback()
@@ -271,6 +282,7 @@ def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame,
     candidates = read_sql("SELECT * FROM candidates ORDER BY candidate_id")
     locations = read_sql("SELECT * FROM locations ORDER BY region, province, district")
     votes = read_sql("SELECT location_id, candidate_id, valid_votes FROM vote_results")
+
     logs = read_sql(
         """
         SELECT event_time, event_type, event_name, detail
@@ -586,17 +598,31 @@ def make_votes_chart(summary: pd.DataFrame) -> go.Figure:
  
 def make_map(locations: pd.DataFrame, metrics: dict) -> go.Figure:
     map_df = locations.copy()
-    threshold = metrics["slow_threshold"]
-    map_df["estado"] = np.where(
-        map_df["velocidad_actas_hora"] < threshold,
-        "Retraso crítico",
-        np.where(map_df["velocidad_actas_hora"] < metrics["avg_speed"], "Avance medio", "Avance alto"),
-    )
+
+    # Si la BD ya trae estado desde Databricks, usamos ese estado.
+    # Si no existe, lo calculamos por velocidad como respaldo. -------- 
+    if "estado" not in map_df.columns:
+        threshold = metrics["slow_threshold"]
+        map_df["estado"] = np.where(
+            map_df["velocidad_actas_hora"] < threshold,
+            "Retraso crítico",
+            np.where(
+                map_df["velocidad_actas_hora"] < metrics["avg_speed"],
+                "Avance medio",
+                "Avance alto",
+            ),
+        )
+    else:
+        map_df["estado"] = map_df["estado"].fillna("Sin información")
+
     map_df["avance"] = np.where(
         map_df["total_actas"] > 0,
         map_df["actas_contabilizadas"] / map_df["total_actas"] * 100,
         0,
     )
+
+
+    
     color_map = {
         "Avance alto": "#5DBB73",
         "Avance medio": "#F4C64E",
