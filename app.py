@@ -24,7 +24,7 @@ except Exception:
 # ==========================================================
 # Configuración general
 # ==========================================================
-st.set_page_config(
+_ = st.set_page_config(
     page_title="Cloud Election Sentinel",
     page_icon="🗳️",
     layout="wide",
@@ -40,7 +40,7 @@ TEXT_DARK = "#1F2937"
 # ==========================================================
 # Estilos tipo dashboard ONPE
 # ==========================================================
-st.markdown(
+_ = st.markdown(
     f"""
     <style>
         .main {{
@@ -1673,22 +1673,42 @@ def get_target_locations(
 ) -> tuple[pd.DataFrame, float]:
     """
     Selecciona las ubicaciones que entran a la simulación y calcula el factor de actas a ingresar.
+
+    Importante:
+    - Si la base tiene actas pendientes, usa esas actas.
+    - Si la base está al 100% y no hay pendientes, crea una bolsa referencial para que el simulador
+      sí muestre variación sin modificar Supabase.
     """
-    if locations.empty or "actas_pendientes" not in locations.columns:
-        return pd.DataFrame(columns=locations.columns), 0.0
+    if locations.empty:
+        return pd.DataFrame(), 0.0
 
     target = locations.copy()
-    target["actas_pendientes"] = pd.to_numeric(target["actas_pendientes"], errors="coerce").fillna(0)
-    if "velocidad_actas_hora" in target.columns:
-        target["velocidad_actas_hora"] = pd.to_numeric(
-            target["velocidad_actas_hora"],
-            errors="coerce"
-        ).fillna(0)
-    else:
-        target["velocidad_actas_hora"] = 0.0
 
-    # Solo tiene sentido simular zonas con actas pendientes.
-    target = target[target["actas_pendientes"] > 0].copy()
+    if "actas_pendientes" not in target.columns:
+        target["actas_pendientes"] = 0
+    if "actas_observadas" not in target.columns:
+        target["actas_observadas"] = 0
+    if "total_actas" not in target.columns:
+        target["total_actas"] = 0
+    if "velocidad_actas_hora" not in target.columns:
+        target["velocidad_actas_hora"] = 0
+
+    for col in ["actas_pendientes", "actas_observadas", "total_actas", "velocidad_actas_hora"]:
+        target[col] = pd.to_numeric(target[col], errors="coerce").fillna(0)
+
+    # Base real: actas pendientes de la BD.
+    target["sim_pending_actas"] = target["actas_pendientes"].clip(lower=0)
+
+    # Respaldo para datasets que ya están al 100%: usa observadas o una bolsa referencial.
+    # Esto evita que el simulador quede congelado en 0.0% de variación.
+    if float(target["sim_pending_actas"].sum()) <= 0:
+        observed_pool = target["actas_observadas"].clip(lower=0)
+        if float(observed_pool.sum()) > 0:
+            target["sim_pending_actas"] = observed_pool
+        else:
+            target["sim_pending_actas"] = (target["total_actas"] * 0.08).round().clip(lower=1)
+
+    target = target[target["sim_pending_actas"] > 0].copy()
     if target.empty:
         return target, 0.0
 
@@ -1702,6 +1722,7 @@ def get_target_locations(
         "Amazonas",
         "Ucayali",
         "Junín",
+        "Junin",
         "Cajamarca",
     ]
 
@@ -1757,7 +1778,7 @@ def simulate_result(
     candidates_count = len(simulated)
 
     for _, loc in target_locations.iterrows():
-        pending_actas = float(loc["actas_pendientes"])
+        pending_actas = float(loc.get("sim_pending_actas", loc.get("actas_pendientes", 0)))
         new_actas = pending_actas * factor
 
         if new_actas <= 0:
@@ -1970,4 +1991,4 @@ def main():
  
  
 if __name__ == "__main__":
-    main()
+    _ = main()
