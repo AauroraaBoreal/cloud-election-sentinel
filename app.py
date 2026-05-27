@@ -1640,22 +1640,45 @@ def page_mapa(locations, candidates, votes):
             for _, row in critical.sort_values("retraso_estimado", ascending=False).iterrows():
                 st.write(f"**{row['region']}** — {row['retraso_estimado']:.0f}% bajo el promedio")
         st.markdown("</div>", unsafe_allow_html=True)
- 
- 
+
+
 def simulate_result(summary: pd.DataFrame, rural_intake: int, delay_hours: int) -> pd.DataFrame:
     simulated = summary.copy()
-    # Ajuste determinístico: no es IA, solo fórmula de escenario.
-    rural_factor = (rural_intake - 50) / 100
-    delay_factor = delay_hours / 24
-    effects = np.array([-0.035, 0.025, -0.010, 0.030, 0.018, 0.012, 0.006])
-    delay_effects = np.array([0.004, -0.006, 0.002, -0.005, 0.002, 0.001, 0.002])
-    current = simulated["percentage"].to_numpy() / 100
-    adjusted = current + effects[: len(current)] * rural_factor + delay_effects[: len(current)] * delay_factor
-    adjusted = np.clip(adjusted, 0.001, None)
-    adjusted = adjusted / adjusted.sum()
-    simulated["sim_percentage"] = adjusted * 100
-    total_votes = simulated["valid_votes"].sum()
-    simulated["sim_votes"] = (adjusted * total_votes).round().astype(int)
+    simulated["sim_votes"] = simulated["valid_votes"].astype(float)
+
+    target_locations, factor = get_target_locations(
+        locations,
+        scenario,
+        rural_intake,
+        delay_hours
+    )
+
+    votes_per_acta = 320
+    candidates_count = len(simulated)
+
+    for _, loc in target_locations.iterrows():
+        pending_actas = float(loc["actas_pendientes"])
+        new_actas = pending_actas * factor
+
+        if new_actas <= 0:
+            continue
+
+        shares = region_modifier_for_simulation(loc["region"], candidates_count)
+
+        for idx, candidate_id in enumerate(simulated["candidate_id"].tolist()):
+            extra_votes = new_actas * votes_per_acta * shares[idx]
+            simulated.loc[simulated["candidate_id"] == candidate_id, "sim_votes"] += extra_votes
+
+    total_sim_votes = simulated["sim_votes"].sum()
+
+    simulated["sim_percentage"] = np.where(
+        total_sim_votes > 0,
+        simulated["sim_votes"] / total_sim_votes * 100,
+        0
+    )
+
+    simulated["sim_votes"] = simulated["sim_votes"].round().astype(int)
+
     return simulated.sort_values("sim_percentage", ascending=False)
  
  
@@ -1686,7 +1709,7 @@ def page_simulador(candidates, locations, votes):
  
         run = st.button("▶ Ejecutar simulación", type="primary", use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
- 
+
     simulated = simulate_result(summary, rural_intake, delay_hours)
     current_leader = summary.iloc[0]
     simulated_leader = simulated.iloc[0]
