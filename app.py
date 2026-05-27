@@ -1642,7 +1642,107 @@ def page_mapa(locations, candidates, votes):
         st.markdown("</div>", unsafe_allow_html=True)
 
 
-def simulate_result(summary: pd.DataFrame, rural_intake: int, delay_hours: int) -> pd.DataFrame:
+def region_modifier_for_simulation(region: str, candidates_count: int) -> np.ndarray:
+    """
+    Retorna la distribución de votos por región ajustada a la cantidad real de candidatos.
+    Usa la misma lógica base del dashboard, pero evita errores si hay más/menos candidatos.
+    """
+    if candidates_count <= 0:
+        return np.array([], dtype=float)
+
+    shares = _region_modifier(region)
+
+    if len(shares) >= candidates_count:
+        shares = shares[:candidates_count]
+    else:
+        extra = np.repeat(1 / candidates_count, candidates_count - len(shares))
+        shares = np.concatenate([shares, extra])
+
+    total = shares.sum()
+    if total <= 0:
+        return np.repeat(1 / candidates_count, candidates_count)
+
+    return shares / total
+
+
+def get_target_locations(
+    locations: pd.DataFrame,
+    scenario: str,
+    rural_intake: int,
+    delay_hours: int,
+) -> tuple[pd.DataFrame, float]:
+    """
+    Selecciona las ubicaciones que entran a la simulación y calcula el factor de actas a ingresar.
+    """
+    if locations.empty or "actas_pendientes" not in locations.columns:
+        return pd.DataFrame(columns=locations.columns), 0.0
+
+    target = locations.copy()
+    target["actas_pendientes"] = pd.to_numeric(target["actas_pendientes"], errors="coerce").fillna(0)
+    if "velocidad_actas_hora" in target.columns:
+        target["velocidad_actas_hora"] = pd.to_numeric(
+            target["velocidad_actas_hora"],
+            errors="coerce"
+        ).fillna(0)
+    else:
+        target["velocidad_actas_hora"] = 0.0
+
+    # Solo tiene sentido simular zonas con actas pendientes.
+    target = target[target["actas_pendientes"] > 0].copy()
+    if target.empty:
+        return target, 0.0
+
+    intake_factor = max(0, min(float(rural_intake), 100)) / 100
+    delay_factor = max(0, 1 - (max(0, float(delay_hours)) / 24))
+
+    rural_regions = [
+        "Cusco",
+        "Puno",
+        "Huancavelica",
+        "Amazonas",
+        "Ucayali",
+        "Junín",
+        "Cajamarca",
+    ]
+
+    if scenario == "Ingreso de actas rurales":
+        rural_target = target[target["region"].isin(rural_regions)].copy()
+        if not rural_target.empty:
+            target = rural_target
+        factor = intake_factor
+
+    elif scenario == "Retraso en regiones críticas":
+        avg_speed = float(target["velocidad_actas_hora"].mean()) if not target.empty else 0
+        if avg_speed > 0:
+            critical_target = target[target["velocidad_actas_hora"] < avg_speed * 0.70].copy()
+        else:
+            critical_target = target.copy()
+
+        if "estado" in target.columns:
+            estado_critico = target[
+                target["estado"].astype(str).str.contains("Retraso|bajo|crítico|critico", case=False, na=False)
+            ].copy()
+            critical_target = pd.concat([critical_target, estado_critico]).drop_duplicates()
+
+        if not critical_target.empty:
+            target = critical_target
+
+        # A mayor retraso, menor ingreso efectivo de actas.
+        factor = intake_factor * delay_factor
+
+    else:  # Actualización uniforme del conteo
+        factor = intake_factor
+
+    return target, factor
+
+
+def simulate_result(
+    summary: pd.DataFrame,
+    locations: pd.DataFrame,
+    scenario: str,
+    rural_intake: int,
+    delay_hours: int,
+) -> pd.DataFrame:
     simulated = summary.copy()
     simulated["sim_votes"] = simulated["valid_votes"].astype(float)
 
@@ -1650,7 +1750,7 @@ def simulate_result(summary: pd.DataFrame, rural_intake: int, delay_hours: int) 
         locations,
         scenario,
         rural_intake,
-        delay_hours
+        delay_hours,
     )
 
     votes_per_acta = 320
@@ -1663,7 +1763,7 @@ def simulate_result(summary: pd.DataFrame, rural_intake: int, delay_hours: int) 
         if new_actas <= 0:
             continue
 
-        shares = region_modifier_for_simulation(loc["region"], candidates_count)
+        shares = region_modifier_for_simulation(str(loc["region"]), candidates_count)
 
         for idx, candidate_id in enumerate(simulated["candidate_id"].tolist()):
             extra_votes = new_actas * votes_per_acta * shares[idx]
@@ -1674,13 +1774,12 @@ def simulate_result(summary: pd.DataFrame, rural_intake: int, delay_hours: int) 
     simulated["sim_percentage"] = np.where(
         total_sim_votes > 0,
         simulated["sim_votes"] / total_sim_votes * 100,
-        0
+        0,
     )
 
     simulated["sim_votes"] = simulated["sim_votes"].round().astype(int)
 
     return simulated.sort_values("sim_percentage", ascending=False)
- 
  
 def page_simulador(candidates, locations, votes):
     if not _has_columns(locations, ["location_id"]) or not _has_columns(candidates, ["candidate_id"]) or not _has_columns(votes, ["location_id", "candidate_id", "valid_votes"]):
@@ -1710,7 +1809,11 @@ def page_simulador(candidates, locations, votes):
         run = st.button("▶ Ejecutar simulación", type="primary", use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-    simulated = simulate_result(summary, rural_intake, delay_hours)
+    if summary.empty:
+        st.warning("No hay resultados electorales disponibles para ejecutar la simulación.")
+        return
+
+    simulated = simulate_result(summary, locations, scenario, rural_intake, delay_hours)
     current_leader = summary.iloc[0]
     simulated_leader = simulated.iloc[0]
     difference = simulated_leader["sim_percentage"] - current_leader["percentage"]
