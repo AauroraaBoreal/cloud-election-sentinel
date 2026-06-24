@@ -32,7 +32,7 @@ CANDIDATES = [
 
 # 10 departamentos priorizados con mayor carga o interés de análisis.
 LOCATIONS = [
-    ("Lima", "Lima", "Lima", -12.0464, -77.0428, 30140, 30140, 0, 0, 920.0),
+    ("Lima", "Lima", "Lima", -12.0464, -77.0428, 30140, 30140, 0, 150, 920.0),
     ("La Libertad", "Trujillo", "Trujillo", -8.1116, -79.0288, 7900, 7900, 0, 0, 310.0),
     ("Piura", "Piura", "Piura", -5.1945, -80.6328, 6700, 6700, 0, 0, 285.0),
     ("Arequipa", "Arequipa", "Arequipa", -16.4090, -71.5375, 7600, 7600, 0, 0, 340.0),
@@ -101,7 +101,7 @@ def main():
     ddl = Path("ddl.sql").read_text(encoding="utf-8")
     cur.execute(ddl)
 
-    cur.execute("TRUNCATE vote_results, locations, candidates, event_logs RESTART IDENTITY CASCADE;")
+    # cur.execute("TRUNCATE vote_results, locations, candidates, event_logs RESTART IDENTITY CASCADE;")
 
     for name, party, symbol, color in CANDIDATES:
         cur.execute(
