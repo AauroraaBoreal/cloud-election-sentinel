@@ -976,7 +976,7 @@ def make_choropleth_map(map_df: pd.DataFrame, metric: str) -> go.Figure:
             marker_line_width=1.5,
             marker_line_color="#FFFFFF",
             colorbar=dict(
-                title=dict(text=title, font=dict(size=12, bold=True)),
+                title=dict(text=f"<b>{title}</b>", font=dict(size=12)),
                 thickness=18, 
                 len=0.8,
                 bgcolor="rgba(255,255,255,0.8)",
@@ -1030,7 +1030,7 @@ def make_choropleth_map(map_df: pd.DataFrame, metric: str) -> go.Figure:
             mode="markers+text",
             marker=dict(size=10, color="#003C7D"),
             text=map_df["region_map"].astype(str),
-            textfont=dict(size=11, color="#1F2937", bold=True),
+            textfont=dict(size=11, color="#1F2937", family="Arial-Bold"),
             textposition="top center",
             hoverinfo="skip",
             showlegend=False,
@@ -2042,17 +2042,75 @@ def page_acerca(db_connected: bool):
 def main():
     candidates, locations, votes, logs, db_connected = load_data()
 
-    with st.sidebar:
-        st.markdown("## 🗳️ Cloud Election Sentinel")
-        st.caption("Sistema analítico del conteo electoral")
-        option = st.radio(
-            "Menú",
-            ["Resumen", "Resultados", "Mapa", "Simulador", "Reportes", "Logs", "Acerca de"],
-            label_visibility="collapsed",
-        )
-        st.divider()
-        st.caption("Base web en Python · Streamlit · Supabase")
+    #with st.sidebar:
+    #    st.markdown("## 🗳️ Cloud Election Sentinel")
+    #    st.caption("Sistema analítico del conteo electoral")
+    #    option = st.radio(
+    #        "Menú",
+    #        ["Resumen", "Resultados", "Mapa", "Simulador", "Reportes", "Logs", "Acerca de"],
+    #        label_visibility="collapsed",
+    #    )
+    #    st.divider()
+    #    st.caption("Base web en Python · Streamlit · Supabase")
 
+    #render_header(db_connected)
+
+    with st.sidebar:
+        # Título Institucional
+        st.markdown(
+            """
+            <div style="text-align: center; padding: 10px 0; border-bottom: 2px solid #003C7D; margin-bottom: 20px;">
+                <h3 style="margin: 0; color: #003C7D; font-weight: 800; font-size: 20px;">🗳️ ELECTION SENTINEL</h3>
+                <span style="font-size: 11px; letter-spacing: 1px; color: #6B7280; font-weight: bold;">ONPE CLOUD ANALYTICS</span>
+            </div>
+            """, unsafe_allow_html=True
+        )
+        
+        # Inyección de CSS para transformar los Radio Buttons en Botones Institucionales
+        st.markdown(
+            """
+            <style>
+                /* Ocultar el círculo nativo de los radio buttons */
+                div[data-testid="stSidebar"] div[role="radiogroup"] label div[data-testid="stMarkdownContainer"] p {
+                    font-weight: 600 !important;
+                    font-size: 14px !important;
+                }
+                div[data-testid="stSidebar"] div[role="radiogroup"] label {
+                    background-color: var(--secondary-background-color);
+                    border: 1px solid var(--border-color);
+                    padding: 12px 16px !important;
+                    border-radius: 8px !important;
+                    margin-bottom: 8px !important;
+                    transition: all 0.2s ease;
+                    width: 100%;
+                    cursor: pointer;
+                }
+                /* Ocultar el círculo de selección por defecto */
+                div[data-testid="stSidebar"] div[role="radiogroup"] label [data-testid="stWidgetSelectionMarker"] {
+                    display: none !important;
+                }
+                /* Estilo cuando el botón está seleccionado (Colores ONPE / Perú) */
+                div[data-testid="stSidebar"] div[role="radiogroup"] [data-checked="true"] label {
+                    background: linear-gradient(90deg, #003C7D 0%, #0B5CAB 100%) !important;
+                    color: white !important;
+                    border-color: #003C7D !important;
+                    box-shadow: 0 4px 6px -1px rgba(0, 60, 125, 0.2);
+                }
+                /* Efecto Hover */
+                div[data-testid="stSidebar"] div[role="radiogroup"] label:hover {
+                    border-color: #003C7D !important;
+                    transform: translateX(3px);
+                }
+            </style>
+            """, unsafe_allow_html=True
+        )
+        
+        options = ["Resumen", "Resultados", "Mapa", "Simulador", "Reportes", "Logs", "Acerca de"]
+        option = st.radio("Menú", options, label_visibility="collapsed")
+        
+        st.markdown("<br><hr style='border-color: var(--border-color);'><br>", unsafe_allow_html=True)
+        st.caption("🇵🇪 Sistema de Control de Actas Oficial · USIL 2026")
+ 
     render_header(db_connected)
 
     if option == "Resumen":
