@@ -80,7 +80,7 @@ CANDIDATE_ORDER = [
 ]
 
 # Regiones con problemas conocidos → mayor probabilidad de retraso.
-ZONAS_RIESGO = {"Puno", "Huancavelica", "Ucayali", "Loreto", "Amazonas"}
+ZONAS_RIESGO = {"Puno", "Cajamarca", "Áncash", "Cusco"}
 
 PROBLEMAS = {
     "Puno": [
@@ -88,21 +88,15 @@ PROBLEMAS = {
         ("Demora logística", "El traslado de actas desde zonas alejadas tarda más de lo previsto."),
         ("Conectividad limitada", "La conexión inestable retrasa la actualización del conteo."),
     ],
-    "Huancavelica": [
-        ("Condición de ruta", "Las rutas de acceso presentan demoras para trasladar actas."),
-        ("Validación manual adicional", "Algunas actas requieren revisión antes de ser contabilizadas."),
-    ],
-    "Ucayali": [
-        ("Traslado lento", "El traslado desde zonas alejadas retrasa el ingreso de actas."),
-        ("Conectividad intermitente", "La red no permite actualizar la información con normalidad."),
-    ],
-    "Loreto": [
-        ("Transporte fluvial", "El traslado por río genera demoras en la llegada de actas."),
-        ("Condición climática", "Las lluvias dificultan el traslado del material electoral."),
-    ],
-    "Amazonas": [
+    "Cajamarca": [
         ("Acceso difícil", "Las rutas remotas retrasan el traslado de actas."),
         ("Conectividad baja", "Zona con cobertura limitada de red."),
+    ],
+    "Áncash": [
+        ("Validación manual adicional", "Algunas actas requieren revisión antes de ser contabilizadas."),
+    ],
+    "Cusco": [
+        ("Demora logística", "El traslado de actas desde zonas alejadas tarda más de lo previsto."),
     ],
     "_default": [
         ("Alta carga temporal", "El volumen de actas genera una demora operativa momentánea."),
@@ -135,16 +129,16 @@ def vote_distribution(region: str, total_votes: int) -> list:
     BASE = [28.5, 18.7, 16.2, 13.4, 8.9, 6.3, 4.5]
 
     MODIFIERS = {
-        "Lima":         [1.15, 1.05, 1.00, 0.92, 0.88, 0.95, 0.90],
+        "Lima Metropolitana": [1.15, 1.05, 1.00, 0.92, 0.88, 0.95, 0.90],
         "La Libertad":  [1.05, 1.00, 1.03, 0.96, 1.00, 0.96, 0.92],
         "Piura":        [1.03, 0.98, 0.95, 1.02, 1.04, 1.02, 0.97],
         "Arequipa":     [1.00, 1.02, 1.10, 0.98, 0.92, 0.96, 0.94],
+        "Cajamarca":    [0.90, 1.10, 0.98, 1.12, 1.05, 1.00, 0.95],
         "Cusco":        [0.88, 1.08, 0.96, 1.14, 1.05, 1.04, 1.02],
-        "Puno":         [0.80, 1.16, 0.90, 1.22, 1.05, 1.10, 1.04],
         "Junín":        [0.94, 1.06, 1.00, 1.04, 1.06, 1.00, 1.00],
-        "Huancavelica": [0.75, 1.18, 0.88, 1.24, 1.12, 1.08, 1.02],
-        "Amazonas":     [0.78, 1.12, 0.92, 1.18, 1.16, 1.08, 1.02],
-        "Ucayali":      [0.82, 1.10, 0.94, 1.14, 1.18, 1.06, 1.02],
+        "Lambayeque":   [1.02, 0.99, 1.01, 0.97, 1.02, 0.98, 0.95],
+        "Áncash":       [0.95, 1.03, 0.97, 1.05, 1.02, 0.99, 0.96],
+        "Puno":         [0.80, 1.16, 0.90, 1.22, 1.05, 1.10, 1.04],
     }
 
     mods = MODIFIERS.get(region, [1.0] * 7)

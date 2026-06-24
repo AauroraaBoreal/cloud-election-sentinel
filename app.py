@@ -140,16 +140,16 @@ BASE_SHARE = BASE_SHARE / BASE_SHARE.sum()
  
 def _region_modifier(region: str) -> np.ndarray:
     modifiers = {
-        "Lima": [1.15, 1.05, 1.00, 0.92, 0.88, 0.95, 0.90],
+        "Lima Metropolitana": [1.15, 1.05, 1.00, 0.92, 0.88, 0.95, 0.90],
         "La Libertad": [1.05, 1.00, 1.03, 0.96, 1.00, 0.96, 0.92],
         "Piura": [1.03, 0.98, 0.95, 1.02, 1.04, 1.02, 0.97],
         "Arequipa": [1.00, 1.02, 1.10, 0.98, 0.92, 0.96, 0.94],
+        "Cajamarca": [0.90, 1.10, 0.98, 1.12, 1.05, 1.00, 0.95],
         "Cusco": [0.88, 1.08, 0.96, 1.14, 1.05, 1.04, 1.02],
-        "Puno": [0.80, 1.16, 0.90, 1.22, 1.05, 1.10, 1.04],
         "Junín": [0.94, 1.06, 1.00, 1.04, 1.06, 1.00, 1.00],
-        "Huancavelica": [0.75, 1.18, 0.88, 1.24, 1.12, 1.08, 1.02],
-        "Amazonas": [0.78, 1.12, 0.92, 1.18, 1.16, 1.08, 1.02],
-        "Ucayali": [0.82, 1.10, 0.94, 1.14, 1.18, 1.06, 1.02],
+        "Lambayeque": [1.02, 0.99, 1.01, 0.97, 1.02, 0.98, 0.95],
+        "Áncash": [0.95, 1.03, 0.97, 1.05, 1.02, 0.99, 0.96],
+        "Puno": [0.80, 1.16, 0.90, 1.22, 1.05, 1.10, 1.04],
     }
     arr = np.array(modifiers.get(region, [1] * len(BASE_SHARE)), dtype=float)
     share = BASE_SHARE * arr
@@ -1857,13 +1857,11 @@ def get_target_locations(
     rural_regions = [
         "Cusco",
         "Puno",
-        "Huancavelica",
-        "Amazonas",
-        "Ucayali",
         "Junín",
         "Junin",
         "Cajamarca",
-        "Loreto",
+        "Áncash",
+        "Ancash",
     ]
 
     if scenario == "Ingreso de actas rurales":
@@ -2007,28 +2005,77 @@ def page_simulador(candidates, locations, votes):
     data = joined_results(candidates, locations, votes)
     summary = candidate_summary(data)
 
-    st.markdown("## Simulador de escenarios")
-    st.caption("Analiza cómo podrían cambiar los resultados según el ingreso de actas pendientes o rurales.")
+    st.markdown("## 🎛️ Simulador interactivo de escenarios")
+    st.info(
+        "💡 **¿Cómo funciona?** Este simulador te permite proyectar cómo cambiarían los resultados "
+        "finales si se procesan las actas pendientes de contabilizar bajo diferentes condiciones "
+        "geográficas o de velocidad. Elige un escenario y usa los controles para analizar el impacto."
+    )
 
     if summary.empty:
         st.warning("No hay resultados electorales disponibles para ejecutar la simulación.")
         return
 
-    left, right = st.columns([1, 1.25])
+    left, right = st.columns([1.1, 1.25])
 
     with left:
         with st.container(border=True):
+            st.markdown("### 🛠️ Configuración de la simulación")
+            
             scenario = st.selectbox(
-                "Escenario",
+                "1. Selecciona el escenario a simular",
                 [
                     "Ingreso de actas rurales",
                     "Retraso en regiones críticas",
                     "Actualización uniforme del conteo",
                 ],
+                help="Elige qué tipo de sesgo de ingreso de actas pendientes deseas analizar."
             )
-            rural_intake = st.slider("Porcentaje de actas ingresadas al escenario", 0, 100, 50, 5)
-            delay_hours = st.slider("Retraso en regiones críticas (horas)", 0, 24, 6, 1)
-            run = st.button("▶ Ejecutar simulación", type="primary", width="stretch")
+            
+            # Explicador contextual del escenario
+            if scenario == "Ingreso de actas rurales":
+                st.markdown(
+                    "<div style='font-size: 0.85rem; color: #555; background-color: #f9f9f9; padding: 10px; border-radius: 6px; border-left: 3px solid #3B82F6; margin-bottom: 12px;'>"
+                    "🌾 **Ingreso de actas rurales**: Simula el ingreso de actas de zonas rurales que suelen tardar más en procesarse. "
+                    "Estas regiones suelen tener tendencias de votación marcadamente diferentes a las urbanas."
+                    "</div>",
+                    unsafe_allow_html=True
+                )
+            elif scenario == "Retraso en regiones críticas":
+                st.markdown(
+                    "<div style='font-size: 0.85rem; color: #555; background-color: #f9f9f9; padding: 10px; border-radius: 6px; border-left: 3px solid #EF4444; margin-bottom: 12px;'>"
+                    "⚠️ **Retraso en regiones críticas**: Simula el impacto de un estrangulamiento logístico o corte en las regiones "
+                    "con velocidades de conteo más bajas, afectando el orden y flujo de votos al centro nacional."
+                    "</div>",
+                    unsafe_allow_html=True
+                )
+            else:
+                st.markdown(
+                    "<div style='font-size: 0.85rem; color: #555; background-color: #f9f9f9; padding: 10px; border-radius: 6px; border-left: 3px solid #10B981; margin-bottom: 12px;'>"
+                    "📈 **Actualización uniforme**: Proyecta el ingreso del total de actas pendientes "
+                    "asumiendo que siguen exactamente el mismo patrón de votación promedio registrado hasta el momento."
+                    "</div>",
+                    unsafe_allow_html=True
+                )
+
+            rural_intake = st.slider(
+                "2. Avance de carga proyectado (%)", 
+                0, 100, 50, 5,
+                help="Ajusta el porcentaje de actas pendientes del escenario que deseas procesar e incorporar en el conteo simulado."
+            )
+            
+            # Mostrar slider de retraso solo en el escenario correspondiente
+            if scenario == "Retraso en regiones críticas":
+                delay_hours = st.slider(
+                    "3. Horas de retraso proyectadas", 
+                    0, 24, 6, 1,
+                    help="Mayor retraso simula un impacto más severo de cuello de botella logístico en la velocidad del procesamiento."
+                )
+            else:
+                delay_hours = 0
+                
+            st.markdown("<br>", unsafe_allow_html=True)
+            run = st.button("▶ Registrar Simulación en Logs", type="primary", width="stretch")
 
     simulated, used_actas, source_label = simulate_result(summary, locations, scenario, rural_intake, delay_hours)
     current_leader = summary.iloc[0]
@@ -2047,15 +2094,61 @@ def page_simulador(candidates, locations, votes):
 
     with right:
         with st.container(border=True):
-            st.markdown("### Resultado de la simulación")
+            st.markdown("### 📊 Resultados de la proyección")
+            
+            # Alertas visuales intuitivas si cambia el ganador
+            if simulated_leader["candidate_id"] != current_leader["candidate_id"]:
+                st.warning(
+                    f"⚠️ **¡CAMBIO DE LIDERAZGO DETECTADO!**<br>"
+                    f"Bajo esta proyección, **{simulated_leader['candidate_name']}** ({simulated_leader['party_name']}) "
+                    f"pasa a liderar la elección, superando a **{current_leader['candidate_name']}**.",
+                    icon="⚠️"
+                )
+            else:
+                st.success(
+                    f"✅ **Liderazgo estable**:<br>"
+                    f"**{simulated_leader['candidate_name']}** ({simulated_leader['party_name']}) "
+                    f"mantiene el primer lugar en este escenario proyectado.",
+                    icon="✅"
+                )
+
+            st.write("")
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Resultado actual", f"{current_leader['percentage']:.1f}%", current_leader["party_name"])
             m2.metric("Resultado simulado", f"{simulated_leader['sim_percentage']:.1f}%", simulated_leader["party_name"])
-            m3.metric("Diferencia", f"{difference:+.1f} pp", "Variación del líder")
-            m4.metric("Nivel de confianza", f"{confidence:.0f}%", "Escenario")
+            
+            # Mostrar diferencia de forma legible
+            diff_label = "Variación de porcentaje"
+            m3.metric("Diferencia", f"{difference:+.1f} pp", diff_label)
+            m4.metric("Confianza del modelo", f"{confidence:.0f}%", "Estimación")
 
-            st.caption(f"Actas proyectadas usadas en el escenario: {format_int(used_actas)} · {source_label}.")
+            st.caption(f"**Base de actas simuladas:** {format_int(used_actas)} actas tomadas de {source_label}.")
 
+            # Cuadro de comparación de votación simulada vs real
+            st.write("")
+            st.markdown("#### Tabla comparativa de resultados:")
+            comparison_df = pd.merge(
+                summary[["candidate_name", "party_name", "percentage"]],
+                simulated[["candidate_name", "sim_percentage"]],
+                on="candidate_name",
+                suffixes=("_actual", "_simulado")
+            )
+            comparison_df["Variación"] = comparison_df["sim_percentage"] - comparison_df["percentage"]
+            comparison_df.columns = ["Candidato", "Partido", "% Actual", "% Proyectado", "Variación (pp)"]
+            
+            st.dataframe(
+                comparison_df,
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "% Actual": st.column_config.NumberColumn(format="%.2f%%"),
+                    "% Proyectado": st.column_config.NumberColumn(format="%.2f%%"),
+                    "Variación (pp)": st.column_config.NumberColumn(format="%+.2f pp")
+                }
+            )
+
+            # Gráfico de barras de resultados simulados
+            st.write("")
             fig = px.bar(
                 simulated,
                 x="party_name",
@@ -2065,10 +2158,10 @@ def page_simulador(candidates, locations, votes):
                 color_discrete_sequence=simulated["display_color"].tolist(),
             )
             fig.update_layout(
-                height=330,
+                height=300,
                 showlegend=False,
                 margin=dict(l=10, r=10, t=15, b=10),
-                yaxis_title="% simulado",
+                yaxis_title="% de votos simulados",
                 xaxis_title="",
                 plot_bgcolor="white",
                 paper_bgcolor="white",
@@ -2133,26 +2226,76 @@ def page_logs(logs: pd.DataFrame):
  
  
 def page_acerca(db_connected: bool):
-    st.markdown("## Acerca de Cloud Election Sentinel")
+    st.markdown("## 🏢 Acerca de Cloud Election Sentinel")
     st.write(
-        "Esta base web replica una vista tipo ONPE para analizar el avance del conteo electoral. "
-        "Está desarrollada únicamente con Python, Streamlit y Supabase/PostgreSQL."
+        "Esta plataforma web proporciona una interfaz analítica en tiempo real para visualizar y "
+        "auditar el avance del procesamiento de actas electorales (estilo ONPE). "
+        "Desarrollado de extremo a extremo utilizando Python, Streamlit, Databricks y Supabase PostgreSQL."
     )
- 
+    
+    st.write("")
+    
+    # Misión, Visión y Objetivo en columnas estilizadas
     c1, c2, c3 = st.columns(3)
-    c1.info("**Frontend:** Streamlit")
-    c2.info("**Base de datos:** Supabase PostgreSQL")
-    c3.info("**Repositorio:** GitHub + rama de trabajo")
- 
-    st.markdown("### Flujo técnico")
+    with c1:
+        st.markdown(
+            """
+            <div style="background-color: #EAF4FF; border-left: 5px solid #003C7D; padding: 18px; border-radius: 8px; min-height: 250px;">
+                <h4 style="color: #003C7D; margin-top: 0;">🎯 Misión</h4>
+                <p style="font-size: 0.88rem; line-height: 1.4; color: #1F2937;">
+                    Garantizar la transparencia electoral mediante herramientas analíticas interactivas y 
+                    proyecciones en tiempo real que faciliten la visualización y auditoría del escrutinio nacional, 
+                    permitiendo a los ciudadanos entender el flujo del conteo paso a paso.
+                </p>
+            </div>
+            """, unsafe_allow_html=True
+        )
+    with c2:
+        st.markdown(
+            """
+            <div style="background-color: #ECFDF5; border-left: 5px solid #10B981; padding: 18px; border-radius: 8px; min-height: 250px;">
+                <h4 style="color: #065F46; margin-top: 0;">👁️ Visión</h4>
+                <p style="font-size: 0.88rem; line-height: 1.4; color: #1F2937;">
+                    Convertirnos en el estándar tecnológico académico de referencia para el análisis, 
+                    simulación y auditoría independiente de procesos electorales en entornos cloud, 
+                    promoviendo el acceso público a datos limpios y entendimiento estadístico.
+                </p>
+            </div>
+            """, unsafe_allow_html=True
+        )
+    with c3:
+        st.markdown(
+            """
+            <div style="background-color: #FFFBEB; border-left: 5px solid #F59E0B; padding: 18px; border-radius: 8px; min-height: 250px;">
+                <h4 style="color: #92400E; margin-top: 0;">🥅 Objetivo de la Página</h4>
+                <p style="font-size: 0.88rem; line-height: 1.4; color: #1F2937;">
+                    Ofrecer una visualización intuitiva y dinámica de la votación, estimar y detectar anomalías 
+                    de procesamiento geográfico, y proveer un simulador estratégico robusto 
+                    para proyectar escenarios electorales realistas a partir de actas pendientes.
+                </p>
+            </div>
+            """, unsafe_allow_html=True
+        )
+        
+    st.write("")
+    st.markdown("### ⚙️ Flujo Técnico del Sistema")
     st.code(
-        """
-        Dataset electoral → Python/Databricks job → Supabase PostgreSQL → Streamlit Cloud → Usuario web
-        """.strip(),
-        language="text",
+        "Dataset electoral → Ingesta/Simulación con Databricks Job → Supabase PostgreSQL (Cloud DB) → Dashboard Streamtlit Cloud → Usuario final",
+        language="text"
     )
-    st.markdown("### Estado")
-    st.success("Conexión activa a Supabase" if db_connected else "No conectado a Supabase. Configura secrets para usar datos reales.")
+    
+    st.write("")
+    st.markdown("### 🌐 Infraestructura y Estado")
+    i1, i2, i3 = st.columns(3)
+    i1.info("**Frontend:** Streamlit & Plotly")
+    i2.info("**Base de Datos:** Supabase PostgreSQL")
+    i3.info("**Carga de datos:** Databricks Job Scheduler")
+    
+    st.write("")
+    if db_connected:
+        st.success("🟢 Conexión activa y segura con base de datos en Supabase PostgreSQL.")
+    else:
+        st.warning("⚠️ No conectado a Supabase. Configura las variables en secrets.toml para habilitar la visualización en tiempo real.")
  
  
 # ==========================================================

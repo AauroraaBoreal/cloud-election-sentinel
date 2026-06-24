@@ -32,16 +32,16 @@ CANDIDATES = [
 
 # 10 departamentos priorizados con mayor carga o interés de análisis.
 LOCATIONS = [
-    ("Lima", "Lima", "Lima", -12.0464, -77.0428, 30140, 30140, 0, 150, 920.0),
+    ("Lima Metropolitana", "Lima", "Lima", -12.0464, -77.0428, 30140, 30140, 0, 150, 920.0),
     ("La Libertad", "Trujillo", "Trujillo", -8.1116, -79.0288, 7900, 7900, 0, 0, 310.0),
     ("Piura", "Piura", "Piura", -5.1945, -80.6328, 6700, 6700, 0, 0, 285.0),
     ("Arequipa", "Arequipa", "Arequipa", -16.4090, -71.5375, 7600, 7600, 0, 0, 340.0),
+    ("Cajamarca", "Cajamarca", "Cajamarca", -7.1638, -78.5003, 5100, 5100, 0, 0, 120.0),
     ("Cusco", "Cusco", "Cusco", -13.5319, -71.9675, 5200, 5200, 0, 0, 160.0),
-    ("Puno", "Puno", "Puno", -15.8402, -70.0219, 4800, 4800, 0, 0, 95.0),
     ("Junín", "Huancayo", "Huancayo", -12.0651, -75.2049, 5400, 5400, 0, 0, 230.0),
-    ("Huancavelica", "Huancavelica", "Huancavelica", -12.7864, -74.9764, 3200, 3200, 0, 0, 82.0),
-    ("Amazonas", "Chachapoyas", "Chachapoyas", -6.2317, -77.8690, 2410, 2410, 0, 0, 76.0),
-    ("Ucayali", "Coronel Portillo", "Callería", -8.3791, -74.5539, 6873, 6873, 0, 0, 88.0),
+    ("Lambayeque", "Chiclayo", "Chiclayo", -6.7011, -79.9061, 4900, 4900, 0, 0, 210.0),
+    ("Áncash", "Huaraz", "Huaraz", -9.5278, -77.5278, 4300, 4300, 0, 0, 180.0),
+    ("Puno", "Puno", "Puno", -15.8402, -70.0219, 4800, 4800, 0, 0, 95.0),
 ]
 
 BASE_SHARE = np.array([28.5, 18.7, 16.2, 13.4, 8.9, 6.3, 4.5], dtype=float)
@@ -78,16 +78,16 @@ def connect():
 def region_modifier(region: str) -> np.ndarray:
     """Pequeña variación regional para que el dashboard no se vea plano."""
     modifiers = {
-        "Lima": [1.15, 1.05, 1.00, 0.92, 0.88, 0.95, 0.90],
+        "Lima Metropolitana": [1.15, 1.05, 1.00, 0.92, 0.88, 0.95, 0.90],
         "La Libertad": [1.05, 1.00, 1.03, 0.96, 1.00, 0.96, 0.92],
         "Piura": [1.03, 0.98, 0.95, 1.02, 1.04, 1.02, 0.97],
         "Arequipa": [1.00, 1.02, 1.10, 0.98, 0.92, 0.96, 0.94],
+        "Cajamarca": [0.90, 1.10, 0.98, 1.12, 1.05, 1.00, 0.95],
         "Cusco": [0.88, 1.08, 0.96, 1.14, 1.05, 1.04, 1.02],
-        "Puno": [0.80, 1.16, 0.90, 1.22, 1.05, 1.10, 1.04],
         "Junín": [0.94, 1.06, 1.00, 1.04, 1.06, 1.00, 1.00],
-        "Huancavelica": [0.75, 1.18, 0.88, 1.24, 1.12, 1.08, 1.02],
-        "Amazonas": [0.78, 1.12, 0.92, 1.18, 1.16, 1.08, 1.02],
-        "Ucayali": [0.82, 1.10, 0.94, 1.14, 1.18, 1.06, 1.02],
+        "Lambayeque": [1.02, 0.99, 1.01, 0.97, 1.02, 0.98, 0.95],
+        "Áncash": [0.95, 1.03, 0.97, 1.05, 1.02, 0.99, 0.96],
+        "Puno": [0.80, 1.16, 0.90, 1.22, 1.05, 1.10, 1.04],
     }
     arr = np.array(modifiers.get(region, [1] * len(BASE_SHARE)), dtype=float)
     share = BASE_SHARE * arr
@@ -101,7 +101,10 @@ def main():
     ddl = Path("ddl.sql").read_text(encoding="utf-8")
     cur.execute(ddl)
 
-    # cur.execute("TRUNCATE vote_results, locations, candidates, event_logs RESTART IDENTITY CASCADE;")
+    cur.execute("DELETE FROM vote_results;")
+    cur.execute("DELETE FROM locations;")
+    cur.execute("DELETE FROM candidates;")
+    cur.execute("DELETE FROM event_logs;")
 
     for name, party, symbol, color in CANDIDATES:
         cur.execute(
