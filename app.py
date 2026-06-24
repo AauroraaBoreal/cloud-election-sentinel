@@ -1607,14 +1607,13 @@ def page_resultados(candidates, locations, votes):
                 unsafe_allow_html=True,
             )
  
-            chart = summary.sort_values("valid_votes", ascending=True).copy()
+            chart = summary.sort_values("valid_votes", ascending=False).copy()
             color_map = dict(zip(chart["party_name"], chart["display_color"]))
  
             fig = px.bar(
                 chart,
-                x="valid_votes",
-                y="party_name",
-                orientation="h",
+                x="party_name",
+                y="valid_votes",
                 text=chart["valid_votes"].map(format_int),
                 color="party_name",
                 color_discrete_map=color_map,
@@ -1630,20 +1629,20 @@ def page_resultados(candidates, locations, votes):
                 textposition="outside",
                 cliponaxis=False,
                 marker_line_width=0,
-                hovertemplate="<b>%{customdata[0]}</b><br>Votos: %{x:,}<br>Porcentaje: %{customdata[2]:.2f}%<extra></extra>",
+                hovertemplate="<b>%{customdata[0]}</b><br>Votos: %{y:,}<br>Porcentaje: %{customdata[2]:.2f}%<extra></extra>",
             )
  
             fig.update_layout(
                 height=430,
                 showlegend=False,
                 margin=dict(l=10, r=35, t=10, b=10),
-                xaxis_title="Votos válidos",
-                yaxis_title="",
+                xaxis_title="",
+                yaxis_title="Votos válidos",
                 plot_bgcolor="white",
                 paper_bgcolor="white",
                 font=dict(color=TEXT_DARK),
-                xaxis=dict(showgrid=True, gridcolor="#E5E7EB"),
-                yaxis=dict(showgrid=False),
+                yaxis=dict(showgrid=True, gridcolor="#E5E7EB"),
+                xaxis=dict(showgrid=False),
             )
  
             st.plotly_chart(fig, width="stretch")

@@ -106,16 +106,18 @@ def main():
     cur.execute("DELETE FROM candidates;")
     cur.execute("DELETE FROM event_logs;")
 
+    candidate_ids = []
     for name, party, symbol, color in CANDIDATES:
         cur.execute(
             """
             INSERT INTO candidates (candidate_name, party_name, party_symbol, display_color)
             VALUES (%s, %s, %s, %s)
+            RETURNING candidate_id
             """,
             (name, party, symbol, color),
         )
+        candidate_ids.append(cur.fetchone()[0])
 
-    candidate_ids = list(range(1, len(CANDIDATES) + 1))
 
     for location in LOCATIONS:
         region, province, district, lat, lon, total, counted, pending, observed, speed = location
