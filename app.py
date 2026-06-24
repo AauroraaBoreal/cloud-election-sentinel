@@ -956,13 +956,13 @@ def prepare_mapa_dataframe(
 
 def make_choropleth_map(map_df: pd.DataFrame, metric: str) -> go.Figure:
     metric_config = {
-        "% de avance": ("avance_pct", "% avance", [[0, "#F05A5A"], [0.5, "#F4C64E"], [1, "#2E8B57"]], [0, 100]),
+        "% de avance": ("avance_pct", "% avance", [[0, "#F59E0B"], [0.5, "#3B82F6"], [1, "#10B981"]], [0, 100]),
         "Velocidad de procesamiento": ("velocidad_actas_hora", "Actas/hora", "Blues", None),
-        "Anomalias": ("anomalia_score", "Anomalia", [[0, "#D9F0DD"], [0.49, "#D9F0DD"], [0.5, "#F4A3A3"], [1, "#F05A5A"]], [0, 1]),
+        "Anomalias": ("anomalia_score", "Anomalia", [[0, "#D1FAE5"], [0.49, "#D1FAE5"], [0.5, "#FEE2E2"], [1, "#EF4444"]], [0, 1]),
     }
     column, title, colorscale, value_range = metric_config[metric]
     zmin, zmax = value_range if value_range else (None, None)
-
+ 
     fig = go.Figure()
     fig.add_trace(
         go.Choroplethmapbox(
@@ -973,9 +973,15 @@ def make_choropleth_map(map_df: pd.DataFrame, metric: str) -> go.Figure:
             colorscale=colorscale,
             zmin=zmin,
             zmax=zmax,
-            marker_line_width=1.0,
+            marker_line_width=1.5,
             marker_line_color="#FFFFFF",
-            colorbar=dict(title=title, thickness=14, len=0.72),
+            colorbar=dict(
+                title=dict(text=title, font=dict(size=12, bold=True)),
+                thickness=18, 
+                len=0.8,
+                bgcolor="rgba(255,255,255,0.8)",
+                x=0.98
+            ),
             customdata=np.stack(
                 [
                     map_df["region_map"].astype(str),
@@ -989,17 +995,18 @@ def make_choropleth_map(map_df: pd.DataFrame, metric: str) -> go.Figure:
                 axis=-1,
             ),
             hovertemplate=(
-                "<b>%{customdata[0]}</b><br>"
-                "Avance: %{customdata[1]:.1f}%<br>"
-                "Velocidad: %{customdata[2]:,.1f} actas/hora<br>"
-                "Pendientes: %{customdata[3]:,} (%{customdata[4]:.1f}%)<br>"
-                "Estado: %{customdata[5]}<br><br>"
-                "<b>Votos principales</b><br>%{customdata[6]}"
+                "<b>📍 Región: %{customdata[0]}</b><br>"
+                "<span style='color:#10B981'>● Avance:</span> <b>%{customdata[1]:.1f}%</b><br>"
+                "<span style='color:#3B82F6'>● Velocidad:</span> <b>%{customdata[2]:,.1f} actas/h</b><br>"
+                "<span style='color:#EF4444'>● Pendientes:</span> <b>%{customdata[3]:,} (%{customdata[4]:.1f}%)</b><br>"
+                "-------------------------<br>"
+                "<b>Status: %{customdata[5]}</b><br><br>"
+                "<b>🗳️ VOTOS PRINCIPALES:</b><br>%{customdata[6]}"
                 "<extra></extra>"
             ),
         )
     )
-
+ 
     anomaly_df = map_df[map_df["bajo_promedio"] | map_df["menor_rendimiento"]]
     if not anomaly_df.empty:
         fig.add_trace(
@@ -1008,30 +1015,30 @@ def make_choropleth_map(map_df: pd.DataFrame, metric: str) -> go.Figure:
                 locations=anomaly_df["region_map"].astype(str),
                 z=np.zeros(len(anomaly_df)),
                 featureidkey="id",
-                colorscale=[[0, "rgba(0,0,0,0)"], [1, "rgba(0,0,0,0)"]],
+                colorscale=[[0, "rgba(239, 68, 68, 0.1)"], [1, "rgba(239, 68, 68, 0.1)"]],
                 showscale=False,
-                marker_line_width=3.2,
-                marker_line_color="#B91C1C",
+                marker_line_width=3.5,
+                marker_line_color="#EF4444",
                 hoverinfo="skip",
             )
         )
-
+ 
     fig.add_trace(
         go.Scattermapbox(
             lat=map_df["latitude"],
             lon=map_df["longitude"],
             mode="markers+text",
-            marker=dict(size=8, color="#111827"),
+            marker=dict(size=10, color="#003C7D"),
             text=map_df["region_map"].astype(str),
-            textfont=dict(size=10, color="#111827"),
+            textfont=dict(size=11, color="#1F2937", bold=True),
             textposition="top center",
             hoverinfo="skip",
             showlegend=False,
         )
     )
     fig.update_layout(
-        height=560,
-        mapbox=dict(style="carto-positron", center={"lat": -10.5, "lon": -75.1}, zoom=4.15),
+        height=600,
+        mapbox=dict(style="carto-positron", center={"lat": -9.5, "lon": -75.0}, zoom=4.5),
         margin=dict(l=0, r=0, t=0, b=0),
         paper_bgcolor="white",
         font=dict(color=TEXT_DARK),
@@ -1039,21 +1046,23 @@ def make_choropleth_map(map_df: pd.DataFrame, metric: str) -> go.Figure:
     )
     return fig
 
-
 def render_mapa(locations: pd.DataFrame, candidates: pd.DataFrame | None = None, votes: pd.DataFrame | None = None) -> pd.DataFrame:
     map_df = prepare_mapa_dataframe(locations, candidates, votes)
     if map_df.empty:
         st.warning("No hay datos para los 10 departamentos de mayor carga electoral.")
         return map_df
-
+ 
+    # Selector de capa interactiva con diseño de pastillas (UX mejorado)
+    st.markdown("##### 🗺️ Selecciona la capa analítica del Mapa:")
     metric = st.radio(
         "Metrica del mapa",
         ["% de avance", "Velocidad de procesamiento", "Anomalias"],
         horizontal=True,
         label_visibility="collapsed",
     )
+    
+    # Renderizado del mapa interactivo
     fig = make_choropleth_map(map_df, metric)
-
     try:
         selection = st.plotly_chart(
             fig,
@@ -1065,7 +1074,7 @@ def render_mapa(locations: pd.DataFrame, candidates: pd.DataFrame | None = None,
     except TypeError:
         selection = None
         st.plotly_chart(fig, use_container_width=True)
-
+ 
     selected_region = None
     selection_payload = {}
     if selection:
@@ -1075,9 +1084,10 @@ def render_mapa(locations: pd.DataFrame, candidates: pd.DataFrame | None = None,
         selected_region = point.get("location")
         if not selected_region and point.get("customdata"):
             selected_region = point["customdata"][0]
+            
     if selected_region is None:
-        selected_region = st.selectbox("Detalle territorial", map_df["region_map"].astype(str).tolist())
-
+        selected_region = st.selectbox("🔍 Filtrar detalle territorial específico:", map_df["region_map"].astype(str).tolist())
+ 
     st.session_state["mapa_departamentos_what_if"] = map_df[
         [
             "region_map",
@@ -1093,33 +1103,170 @@ def render_mapa(locations: pd.DataFrame, candidates: pd.DataFrame | None = None,
         ]
     ].copy()
     st.session_state["mapa_departamentos_prioritarios"] = map_df[map_df["alta_pendiente"]]["region_map"].astype(str).tolist()
-
+ 
+    # ======================================================
+    # CONTENEDOR DETALLE TERRITORIAL INTERACTIVO (UX CARD)
+    # ======================================================
     detail = locations.copy()
     detail["region_map"] = detail["region"].map(_clean_department)
     detail = detail[detail["region_map"].astype(str) == str(selected_region)]
-    st.markdown(f"#### Detalle: {selected_region}")
-    if {"province", "district"}.issubset(detail.columns) and not detail.empty:
-        detail_table = (
-            detail.groupby(["province", "district"], as_index=False)
-            .agg(
-                total_actas=("total_actas", "sum"),
-                actas_contabilizadas=("actas_contabilizadas", "sum"),
-                actas_pendientes=("actas_pendientes", "sum"),
+    
+    st.write("")
+    with st.container(border=True):
+        st.markdown(f"### 📍 Desglose Geográfico: {selected_region}")
+        st.caption("Visualización de actas a nivel provincial y distrital en la región seleccionada.")
+        
+        if {"province", "district"}.issubset(detail.columns) and not detail.empty:
+            detail_table = (
+                detail.groupby(["province", "district"], as_index=False)
+                .agg(
+                    total_actas=("total_actas", "sum"),
+                    actas_contabilizadas=("actas_contabilizadas", "sum"),
+                    actas_pendientes=("actas_pendientes", "sum"),
+                )
+                .sort_values("actas_pendientes", ascending=False)
             )
-            .sort_values("actas_pendientes", ascending=False)
-        )
-        detail_table["avance_pct"] = np.where(
-            detail_table["total_actas"] > 0,
-            detail_table["actas_contabilizadas"] / detail_table["total_actas"] * 100,
-            0,
-        )
-        detail_table.columns = ["Provincia", "Distrito", "Actas totales", "Procesadas", "Pendientes", "% avance"]
-        st.dataframe(detail_table, use_container_width=True, hide_index=True)
-    else:
-        st.info("El dataset actual no incluye detalle de provincia o distrito para esta seleccion.")
-
+            detail_table["avance_pct"] = np.where(
+                detail_table["total_actas"] > 0,
+                detail_table["actas_contabilizadas"] / detail_table["total_actas"] * 100,
+                0,
+            )
+            detail_table.columns = ["Provincia", "Distrito", "Actas totales", "Procesadas", "Pendientes", "% avance"]
+            
+            # Formateo dinámico UX con barra de progreso integrada
+            st.dataframe(
+                detail_table, 
+                use_container_width=True, 
+                hide_index=True,
+                column_config={
+                    "Actas totales": st.column_config.NumberColumn(format="%d"),
+                    "Procesadas": st.column_config.NumberColumn(format="%d"),
+                    "Pendientes": st.column_config.NumberColumn(format="%d"),
+                    "% avance": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100)
+                }
+            )
+        else:
+            st.info("El dataset actual no incluye detalle de provincia o distrito para esta selección.")
+ 
     return map_df
 
+def page_mapa(locations, candidates, votes):
+    # Cabecera Estilizada
+    st.markdown(
+        """
+        <div style="background: linear-gradient(135deg, #091E3A 0%, #2E8B57 100%); color: white; padding: 22px; border-radius: 14px; margin-bottom: 20px;">
+            <h2 style='margin:0; font-weight:800;'>🗺️ Análisis Territorial del Conteo</h2>
+            <p style='margin:5px 0 0 0; opacity:0.85;'>Módulo geoespacial interactivo para la detección de anomalías y velocidad de procesamiento en regiones prioritarias.</p>
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
+
+    if locations.empty or candidates.empty or votes.empty:
+        st.warning("No hay datos disponibles para mostrar el mapa. Verifica la conexión a Supabase.")
+        return
+
+    # Inyección del mapa y captura del DataFrame procesado
+    map_df = render_mapa(locations, candidates, votes)
+    if map_df.empty:
+        return
+ 
+    # ======================================================
+    # DASHBOARD LIVE DE MÉTRICAS (KPI GRID COLORIDO)
+    # ======================================================
+    st.write("")
+    st.markdown("#### 📈 Indicadores Clave de Control (KPIs)")
+    c1, c2, c3, c4 = st.columns(4)
+    
+    with c1:
+        st.markdown(
+            f"""<div style="background-color: #EBF5FF; border-left: 5px solid #3B82F6; padding: 15px; border-radius: 8px;">
+                <span style="color: #1E40AF; font-size: 13px; font-weight: bold; text-transform: uppercase;">Avance Promedio</span>
+                <h2 style="color: #1E3A8A; margin: 5px 0 0 0; font-weight: 800;">{map_df['avance_pct'].mean():.1f}%</h2>
+                <span style="color: #1F2937; font-size: 11px;">Macro-regiones</span>
+            </div>""", unsafe_allow_html=True
+        )
+    with c2:
+        st.markdown(
+            f"""<div style="background-color: #ECFDF5; border-left: 5px solid #10B981; padding: 15px; border-radius: 8px;">
+                <span style="color: #065F46; font-size: 13px; font-weight: bold; text-transform: uppercase;">Velocidad Global</span>
+                <h2 style="color: #064E3B; margin: 5px 0 0 0; font-weight: 800;">{map_df['velocidad_actas_hora'].sum():,.0f}</h2>
+                <span style="color: #1F2937; font-size: 11px;">Actas por hora</span>
+            </div>""", unsafe_allow_html=True
+        )
+    with c3:
+        anomalias = int(map_df["anomalia_score"].sum())
+        bg_anom = "#FEF2F2" if anomalias > 0 else "#ECFDF5"
+        border_anom = "#EF4444" if anomalias > 0 else "#10B981"
+        text_anom = "#991B1B" if anomalias > 0 else "#065F46"
+        st.markdown(
+            f"""<div style="background-color: {bg_anom}; border-left: 5px solid {border_anom}; padding: 15px; border-radius: 8px;">
+                <span style="color: {text_anom}; font-size: 13px; font-weight: bold; text-transform: uppercase;">Regiones con Retraso</span>
+                <h2 style="color: {text_anom}; margin: 5px 0 0 0; font-weight: 800;">{anomalias}</h2>
+                <span style="color: #1F2937; font-size: 11px;">Bajo el promedio objetivo</span>
+            </div>""", unsafe_allow_html=True
+        )
+    with c4:
+        st.markdown(
+            f"""<div style="background-color: #FFFBEB; border-left: 5px solid #F59E0B; padding: 15px; border-radius: 8px;">
+                <span style="color: #92400E; font-size: 13px; font-weight: bold; text-transform: uppercase;">Alta Carga Pendiente</span>
+                <h2 style="color: #78350F; margin: 5px 0 0 0; font-weight: 800;">{int(map_df['alta_pendiente'].sum())}</h2>
+                <span style="color: #1F2937; font-size: 11px;">Zonas críticas identificadas</span>
+            </div>""", unsafe_allow_html=True
+        )
+
+    # ======================================================
+    # SECCIÓN INFERIOR COMPLEMENTARIA (TABLAS DE CONTROL ACCIONABLES)
+    # ======================================================
+    st.write("")
+    left, right = st.columns([1.15, 1])
+    
+    with left:
+        with st.container(border=True):
+            st.markdown("### 🚨 Alerta: Departamentos con Menor Rendimiento")
+            st.caption("Zonas cuya velocidad es inferior en más del 30% respecto al promedio.")
+            risk = map_df[map_df["bajo_promedio"] | map_df["menor_rendimiento"]].copy()
+            if risk.empty:
+                st.success("🎉 Excelente: No hay departamentos bajo el promedio actual en este corte.")
+            else:
+                risk["brecha_avance"] = (map_df["avance_pct"].mean() - risk["avance_pct"]).clip(lower=0)
+                risk_table = risk[
+                    ["region_map", "avance_pct", "velocidad_actas_hora", "pendiente_pct", "brecha_avance", "estado_analitico"]
+                ].sort_values(["brecha_avance", "pendiente_pct"], ascending=False)
+                risk_table.columns = ["Departamento", "% Avance", "Actas/Hora", "% Pendiente", "Brecha Avance", "Estado Crítico"]
+                
+                st.dataframe(
+                    risk_table, 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={
+                        "% Avance": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
+                        "Brecha Avance": st.column_config.NumberColumn(format="%.1f pp"),
+                        "Actas/Hora": st.column_config.NumberColumn(format="%.1f")
+                    }
+                )
+ 
+    with right:
+        with st.container(border=True):
+            st.markdown("### 🎛️ Insumos Críticos para el Simulador")
+            st.caption("Bolsas de actas pendientes recomendadas para simulaciones estratégicas What-If[cite: 1].")
+            what_if = map_df[map_df["alta_pendiente"]].copy()
+            if what_if.empty:
+                st.info("No se detectan departamentos con carga acumulada crítica para simulación.")
+            else:
+                what_if_table = what_if[["region_map", "actas_pendientes", "pendiente_pct", "velocidad_actas_hora"]]
+                what_if_table.columns = ["Departamento", "Actas Pendientes", "% Pendiente", "Velocidad (Actas/h)"]
+                
+                st.dataframe(
+                    what_if_table, 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={
+                        "Actas Pendientes": st.column_config.NumberColumn(format="%d"),
+                        "% Pendiente": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
+                        "Velocidad (Actas/h)": st.column_config.NumberColumn(format="%.1f")
+                    }
+                )
 
 def page_resumen(candidates, locations, votes):
     filtered_locations = apply_filters(locations)
