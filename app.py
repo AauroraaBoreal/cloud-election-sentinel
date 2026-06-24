@@ -2215,11 +2215,7 @@ def main():
     render_header(db_connected)
  
     if option == "Resumen":
-<<<<<<< HEAD
         page_resumen(candidates, locations, votes) # <- Aquí agregamos db_connected
-=======
-        page_resumen(candidates, locations, votes, db_connected)
->>>>>>> 72a2d28b91aaa3682feac8c883763e4f1d0204e4
     elif option == "Resultados":
         page_resultados(candidates, locations, votes)
     elif option == "Mapa":
@@ -2232,11 +2228,5 @@ def main():
         page_logs(logs)
     else:
         page_acerca(db_connected)
-<<<<<<< HEAD
-
-=======
- 
- 
->>>>>>> 72a2d28b91aaa3682feac8c883763e4f1d0204e4
 if __name__ == "__main__":
     _APP_RESULT = main()
