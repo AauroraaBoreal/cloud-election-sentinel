@@ -799,18 +799,20 @@ def prepare_mapa_dataframe(
     grouped["votos_principales"] = grouped["votos_principales"].fillna("Sin votos disponibles")
     grouped["region_map"] = pd.Categorical(grouped["region_map"], TOP_ELECTORAL_DEPARTMENTS, ordered=True)
     return grouped.sort_values("region_map").reset_index(drop=True)
- 
- 
+
 def make_choropleth_map(map_df: pd.DataFrame, metric: str) -> go.Figure:
+    # Paleta ONPE/Perú adaptable a Fondos Claros y Oscuros
     metric_config = {
-        "% de avance": ("avance_pct", "% avance", [[0, "#F05A5A"], [0.5, "#F4C64E"], [1, "#2E8B57"]], [0, 100]),
-        "Velocidad de procesamiento": ("velocidad_actas_hora", "Actas/hora", "Blues", None),
-        "Anomalias": ("anomalia_score", "Anomalia", [[0, "#D9F0DD"], [0.49, "#D9F0DD"], [0.5, "#F4A3A3"], [1, "#F05A5A"]], [0, 1]),
+        "% de avance": ("avance_pct", "% Avance", [[0, "#E5E7EB"], [0.3, "#FCA5A5"], [0.7, "#FEF08A"], [1, "#BBF7D0"]], [0, 100]),
+        "Velocidad de procesamiento": ("velocidad_actas_hora", "Actas/h", [[0, "#EFF6FF"], [1, "#1E3A8A"]], None),
+        "Anomalias": ("anomalia_score", "Alerta", [[0, "#F3F4F6"], [0.49, "#F3F4F6"], [0.5, "#FEE2E2"], [1, "#EF4444"]], [0, 1]),
     }
     column, title, colorscale, value_range = metric_config[metric]
     zmin, zmax = value_range if value_range else (None, None)
  
     fig = go.Figure()
+    
+    # Única capa base oficial: Mapa Poligonal de Departamentos (Sin duplicados ni solapamientos)
     fig.add_trace(
         go.Choroplethmapbox(
             geojson=DEPARTMENT_GEOJSON,
@@ -821,8 +823,14 @@ def make_choropleth_map(map_df: pd.DataFrame, metric: str) -> go.Figure:
             zmin=zmin,
             zmax=zmax,
             marker_line_width=1.0,
-            marker_line_color="#FFFFFF",
-            colorbar=dict(title=title, thickness=14, len=0.72),
+            marker_line_color="var(--background-color)", # Línea de frontera adaptativa al tema claro/oscuro
+            colorbar=dict(
+                title=dict(text=f"<b>{title}</b>", font=dict(size=11, color="gray")),
+                thickness=15, 
+                len=0.6,
+                x=0.98,
+                y=0.5
+            ),
             customdata=np.stack(
                 [
                     map_df["region_map"].astype(str),
@@ -830,77 +838,70 @@ def make_choropleth_map(map_df: pd.DataFrame, metric: str) -> go.Figure:
                     map_df["velocidad_actas_hora"],
                     map_df["actas_pendientes"],
                     map_df["pendiente_pct"],
-                    map_df["estado_analitico"],
-                    map_df["votos_principales"],
+                    map_df["estado_analitico"]
                 ],
                 axis=-1,
             ),
             hovertemplate=(
-                "<b>%{customdata[0]}</b><br>"
-                "Avance: %{customdata[1]:.1f}%<br>"
-                "Velocidad: %{customdata[2]:,.1f} actas/hora<br>"
-                "Pendientes: %{customdata[3]:,} (%{customdata[4]:.1f}%)<br>"
-                "Estado: %{customdata[5]}<br><br>"
-                "<b>Votos principales</b><br>%{customdata[6]}"
+                "<b>📍 Región: %{customdata[0]}</b><br><br>"
+                "📊 Avance: <b>%{customdata[1]:.1f}%</b><br>"
+                "⚡ Velocidad: <b>%{customdata[2]:,.1f} actas/h</b><br>"
+                "⚠️ Pendientes: <b>%{customdata[3]:,} (%{customdata[4]:.1f}%)</b><br>"
+                "📋 Estado: <b>%{customdata[5]}</b>"
                 "<extra></extra>"
             ),
         )
     )
  
+    # Resaltado limpio de bordes para alertas críticas (En lugar de figuras sólidas encima)
     anomaly_df = map_df[map_df["bajo_promedio"] | map_df["menor_rendimiento"]]
     if not anomaly_df.empty:
         fig.add_trace(
             go.Choroplethmapbox(
                 geojson=DEPARTMENT_GEOJSON,
                 locations=anomaly_df["region_map"].astype(str),
-                z=np.zeros(len(anomaly_df)),
+                z=np.ones(len(anomaly_df)),
                 featureidkey="id",
-                colorscale=[[0, "rgba(0,0,0,0)"], [1, "rgba(0,0,0,0)"]],
+                colorscale=[[0, "rgba(220, 38, 38, 0.05)"], [1, "rgba(220, 38, 38, 0.05)"]], # Fondo casi invisible, solo resalta bordes
                 showscale=False,
-                marker_line_width=3.2,
-                marker_line_color="#B91C1C",
+                marker_line_width=2.5,
+                marker_line_color="#DC2626", # Borde Rojo Alerta Institucional
                 hoverinfo="skip",
             )
         )
  
-    fig.add_trace(
-        go.Scattermapbox(
-            lat=map_df["latitude"],
-            lon=map_df["longitude"],
-            mode="markers+text",
-            marker=dict(size=8, color="#111827"),
-            text=map_df["region_map"].astype(str),
-            textfont=dict(size=10, color="#111827"),
-            textposition="top center",
-            hoverinfo="skip",
-            showlegend=False,
-        )
-    )
+    # Configuración del contenedor del mapa
     fig.update_layout(
-        height=560,
-        mapbox=dict(style="carto-positron", center={"lat": -10.5, "lon": -75.1}, zoom=4.15),
+        height=550,
+        mapbox=dict(
+            style="carto-positron", # Fondo de mapa limpio y minimalista gris claro
+            center={"lat": -9.19, "lon": -75.01}, # Centrado geográfico exacto de Perú
+            zoom=4.6
+        ),
         margin=dict(l=0, r=0, t=0, b=0),
-        paper_bgcolor="white",
-        font=dict(color=TEXT_DARK),
+        paper_bgcolor="rgba(0,0,0,0)", # Fondo transparente para integrarse con Temas Claro/Oscuro
+        plot_bgcolor="rgba(0,0,0,0)",
         showlegend=False,
     )
     return fig
- 
- 
+
 def render_mapa(locations: pd.DataFrame, candidates: pd.DataFrame | None = None, votes: pd.DataFrame | None = None) -> pd.DataFrame:
     map_df = prepare_mapa_dataframe(locations, candidates, votes)
     if map_df.empty:
         st.warning("No hay datos para los 10 departamentos de mayor carga electoral.")
         return map_df
  
+    # Selector de capa interactiva con diseño de pastillas (UX mejorado)
+    st.markdown("##### 🗺️ Selecciona la capa analítica del Mapa:")
     metric = st.radio(
         "Metrica del mapa",
         ["% de avance", "Velocidad de procesamiento", "Anomalias"],
         horizontal=True,
         label_visibility="collapsed",
     )
+    
+    # Renderizado del mapa interactivo
     fig = make_choropleth_map(map_df, metric)
- 
     try:
         selection = st.plotly_chart(
             fig,
@@ -911,7 +912,7 @@ def render_mapa(locations: pd.DataFrame, candidates: pd.DataFrame | None = None,
         )
     except TypeError:
         selection = None
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, use_container_width=True)
  
     selected_region = None
     selection_payload = {}
@@ -922,8 +923,9 @@ def render_mapa(locations: pd.DataFrame, candidates: pd.DataFrame | None = None,
         selected_region = point.get("location")
         if not selected_region and point.get("customdata"):
             selected_region = point["customdata"][0]
+            
     if selected_region is None:
-        selected_region = st.selectbox("Detalle territorial", map_df["region_map"].astype(str).tolist())
+        selected_region = st.selectbox("🔍 Filtrar detalle territorial específico:", map_df["region_map"].astype(str).tolist())
  
     st.session_state["mapa_departamentos_what_if"] = map_df[
         [
@@ -941,45 +943,171 @@ def render_mapa(locations: pd.DataFrame, candidates: pd.DataFrame | None = None,
     ].copy()
     st.session_state["mapa_departamentos_prioritarios"] = map_df[map_df["alta_pendiente"]]["region_map"].astype(str).tolist()
  
+    # ======================================================
+    # CONTENEDOR DETALLE TERRITORIAL INTERACTIVO (UX CARD)
+    # ======================================================
     detail = locations.copy()
     detail["region_map"] = detail["region"].map(_clean_department)
     detail = detail[detail["region_map"].astype(str) == str(selected_region)]
-    st.markdown(f"#### Detalle: {selected_region}")
-    if {"province", "district"}.issubset(detail.columns) and not detail.empty:
-        detail_table = (
-            detail.groupby(["province", "district"], as_index=False)
-            .agg(
-                total_actas=("total_actas", "sum"),
-                actas_contabilizadas=("actas_contabilizadas", "sum"),
-                actas_pendientes=("actas_pendientes", "sum"),
+    
+    st.write("")
+    with st.container(border=True):
+        st.markdown(f"### 📍 Desglose Geográfico: {selected_region}")
+        st.caption("Visualización de actas a nivel provincial y distrital en la región seleccionada.")
+        
+        if {"province", "district"}.issubset(detail.columns) and not detail.empty:
+            detail_table = (
+                detail.groupby(["province", "district"], as_index=False)
+                .agg(
+                    total_actas=("total_actas", "sum"),
+                    actas_contabilizadas=("actas_contabilizadas", "sum"),
+                    actas_pendientes=("actas_pendientes", "sum"),
+                )
+                .sort_values("actas_pendientes", ascending=False)
             )
-            .sort_values("actas_pendientes", ascending=False)
-        )
-        detail_table["avance_pct"] = np.where(
-            detail_table["total_actas"] > 0,
-            detail_table["actas_contabilizadas"] / detail_table["total_actas"] * 100,
-            0,
-        )
-        detail_table.columns = ["Provincia", "Distrito", "Actas totales", "Procesadas", "Pendientes", "% avance"]
-        st.dataframe(detail_table, width="stretch", hide_index=True)
-    else:
-        st.info("El dataset actual no incluye detalle de provincia o distrito para esta seleccion.")
+            detail_table["avance_pct"] = np.where(
+                detail_table["total_actas"] > 0,
+                detail_table["actas_contabilizadas"] / detail_table["total_actas"] * 100,
+                0,
+            )
+            detail_table.columns = ["Provincia", "Distrito", "Actas totales", "Procesadas", "Pendientes", "% avance"]
+            
+            # Formateo dinámico UX con barra de progreso integrada
+            st.dataframe(
+                detail_table, 
+                use_container_width=True, 
+                hide_index=True,
+                column_config={
+                    "Actas totales": st.column_config.NumberColumn(format="%d"),
+                    "Procesadas": st.column_config.NumberColumn(format="%d"),
+                    "Pendientes": st.column_config.NumberColumn(format="%d"),
+                    "% avance": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100)
+                }
+            )
+        else:
+            st.info("El dataset actual no incluye detalle de provincia o distrito para esta selección.")
  
     return map_df
- 
- 
-def page_resumen(candidates, locations, votes, db_connected: bool = False):
-    schema_ok, schema_msg = _validate_supabase_schema(candidates, locations, votes)
-    if not db_connected or not schema_ok:
-        db_error = st.session_state.get("db_conn_error", "")
-        msg = "⚠️ No hay datos disponibles desde Supabase."
-        if schema_msg:
-            msg += f" {schema_msg}"
-        if db_error:
-            msg += f" Error: `{db_error}`"
-        st.warning(msg)
+
+def page_mapa(locations, candidates, votes):
+    # Cabecera Estilizada
+    st.markdown(
+        """
+        <div style="background: linear-gradient(135deg, #091E3A 0%, #2E8B57 100%); color: white; padding: 22px; border-radius: 14px; margin-bottom: 20px;">
+            <h2 style='margin:0; font-weight:800;'>🗺️ Análisis Territorial del Conteo</h2>
+            <p style='margin:5px 0 0 0; opacity:0.85;'>Módulo geoespacial interactivo para la detección de anomalías y velocidad de procesamiento en regiones prioritarias.</p>
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
+
+    if locations.empty or candidates.empty or votes.empty:
+        st.warning("No hay datos disponibles para mostrar el mapa. Verifica la conexión a Supabase.")
         return
 
+    # Inyección del mapa y captura del DataFrame procesado
+    map_df = render_mapa(locations, candidates, votes)
+    if map_df.empty:
+        return
+ 
+    # ======================================================
+    # DASHBOARD LIVE DE MÉTRICAS (KPI GRID COLORIDO)
+    # ======================================================
+    st.write("")
+    st.markdown("#### 📈 Indicadores Clave de Control (KPIs)")
+    c1, c2, c3, c4 = st.columns(4)
+    
+    with c1:
+        st.markdown(
+            f"""<div style="background-color: #EBF5FF; border-left: 5px solid #3B82F6; padding: 15px; border-radius: 8px;">
+                <span style="color: #1E40AF; font-size: 13px; font-weight: bold; text-transform: uppercase;">Avance Promedio</span>
+                <h2 style="color: #1E3A8A; margin: 5px 0 0 0; font-weight: 800;">{map_df['avance_pct'].mean():.1f}%</h2>
+                <span style="color: #1F2937; font-size: 11px;">Macro-regiones</span>
+            </div>""", unsafe_allow_html=True
+        )
+    with c2:
+        st.markdown(
+            f"""<div style="background-color: #ECFDF5; border-left: 5px solid #10B981; padding: 15px; border-radius: 8px;">
+                <span style="color: #065F46; font-size: 13px; font-weight: bold; text-transform: uppercase;">Velocidad Global</span>
+                <h2 style="color: #064E3B; margin: 5px 0 0 0; font-weight: 800;">{map_df['velocidad_actas_hora'].sum():,.0f}</h2>
+                <span style="color: #1F2937; font-size: 11px;">Actas por hora</span>
+            </div>""", unsafe_allow_html=True
+        )
+    with c3:
+        anomalias = int(map_df["anomalia_score"].sum())
+        bg_anom = "#FEF2F2" if anomalias > 0 else "#ECFDF5"
+        border_anom = "#EF4444" if anomalias > 0 else "#10B981"
+        text_anom = "#991B1B" if anomalias > 0 else "#065F46"
+        st.markdown(
+            f"""<div style="background-color: {bg_anom}; border-left: 5px solid {border_anom}; padding: 15px; border-radius: 8px;">
+                <span style="color: {text_anom}; font-size: 13px; font-weight: bold; text-transform: uppercase;">Regiones con Retraso</span>
+                <h2 style="color: {text_anom}; margin: 5px 0 0 0; font-weight: 800;">{anomalias}</h2>
+                <span style="color: #1F2937; font-size: 11px;">Bajo el promedio objetivo</span>
+            </div>""", unsafe_allow_html=True
+        )
+    with c4:
+        st.markdown(
+            f"""<div style="background-color: #FFFBEB; border-left: 5px solid #F59E0B; padding: 15px; border-radius: 8px;">
+                <span style="color: #92400E; font-size: 13px; font-weight: bold; text-transform: uppercase;">Alta Carga Pendiente</span>
+                <h2 style="color: #78350F; margin: 5px 0 0 0; font-weight: 800;">{int(map_df['alta_pendiente'].sum())}</h2>
+                <span style="color: #1F2937; font-size: 11px;">Zonas críticas identificadas</span>
+            </div>""", unsafe_allow_html=True
+        )
+
+    # ======================================================
+    # SECCIÓN INFERIOR COMPLEMENTARIA (TABLAS DE CONTROL ACCIONABLES)
+    # ======================================================
+    st.write("")
+    left, right = st.columns([1.15, 1])
+    
+    with left:
+        with st.container(border=True):
+            st.markdown("### 🚨 Alerta: Departamentos con Menor Rendimiento")
+            st.caption("Zonas cuya velocidad es inferior en más del 30% respecto al promedio.")
+            risk = map_df[map_df["bajo_promedio"] | map_df["menor_rendimiento"]].copy()
+            if risk.empty:
+                st.success("🎉 Excelente: No hay departamentos bajo el promedio actual en este corte.")
+            else:
+                risk["brecha_avance"] = (map_df["avance_pct"].mean() - risk["avance_pct"]).clip(lower=0)
+                risk_table = risk[
+                    ["region_map", "avance_pct", "velocidad_actas_hora", "pendiente_pct", "brecha_avance", "estado_analitico"]
+                ].sort_values(["brecha_avance", "pendiente_pct"], ascending=False)
+                risk_table.columns = ["Departamento", "% Avance", "Actas/Hora", "% Pendiente", "Brecha Avance", "Estado Crítico"]
+                
+                st.dataframe(
+                    risk_table, 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={
+                        "% Avance": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
+                        "Brecha Avance": st.column_config.NumberColumn(format="%.1f pp"),
+                        "Actas/Hora": st.column_config.NumberColumn(format="%.1f")
+                    }
+                )
+ 
+    with right:
+        with st.container(border=True):
+            st.markdown("### 🎛️ Insumos Críticos para el Simulador")
+            st.caption("Bolsas de actas pendientes recomendadas para simulaciones estratégicas What-If[cite: 1].")
+            what_if = map_df[map_df["alta_pendiente"]].copy()
+            if what_if.empty:
+                st.info("No se detectan departamentos con carga acumulada crítica para simulación.")
+            else:
+                what_if_table = what_if[["region_map", "actas_pendientes", "pendiente_pct", "velocidad_actas_hora"]]
+                what_if_table.columns = ["Departamento", "Actas Pendientes", "% Pendiente", "Velocidad (Actas/h)"]
+                
+                st.dataframe(
+                    what_if_table, 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={
+                        "Actas Pendientes": st.column_config.NumberColumn(format="%d"),
+                        "% Pendiente": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
+                        "Velocidad (Actas/h)": st.column_config.NumberColumn(format="%.1f")
+                    }
+                )
+
+def page_resumen(candidates, locations, votes):
     filtered_locations = apply_filters(locations)
     data = joined_results(candidates, filtered_locations, votes)
     summary = candidate_summary(data)
@@ -2014,17 +2142,75 @@ def page_acerca(db_connected: bool):
 # ==========================================================
 def main():
     candidates, locations, votes, logs, db_connected = load_data()
- 
+
+    #with st.sidebar:
+    #    st.markdown("## 🗳️ Cloud Election Sentinel")
+    #    st.caption("Sistema analítico del conteo electoral")
+    #    option = st.radio(
+    #        "Menú",
+    #        ["Resumen", "Resultados", "Mapa", "Simulador", "Reportes", "Logs", "Acerca de"],
+    #        label_visibility="collapsed",
+    #    )
+    #    st.divider()
+    #    st.caption("Base web en Python · Streamlit · Supabase")
+
+    #render_header(db_connected)
+
     with st.sidebar:
-        st.markdown("## 🗳️ Cloud Election Sentinel")
-        st.caption("Sistema analítico del conteo electoral")
-        option = st.radio(
-            "Menú",
-            ["Resumen", "Resultados", "Mapa", "Simulador", "Reportes", "Logs", "Acerca de"],
-            label_visibility="collapsed",
+        # Título Institucional
+        st.markdown(
+            """
+            <div style="text-align: center; padding: 10px 0; border-bottom: 2px solid #003C7D; margin-bottom: 20px;">
+                <h3 style="margin: 0; color: #003C7D; font-weight: 800; font-size: 20px;">🗳️ ELECTION SENTINEL</h3>
+                <span style="font-size: 11px; letter-spacing: 1px; color: #6B7280; font-weight: bold;">ONPE CLOUD ANALYTICS</span>
+            </div>
+            """, unsafe_allow_html=True
         )
-        st.divider()
-        st.caption("Base web en Python · Streamlit · Supabase")
+        
+        # Inyección de CSS para transformar los Radio Buttons en Botones Institucionales
+        st.markdown(
+            """
+            <style>
+                /* Ocultar el círculo nativo de los radio buttons */
+                div[data-testid="stSidebar"] div[role="radiogroup"] label div[data-testid="stMarkdownContainer"] p {
+                    font-weight: 600 !important;
+                    font-size: 14px !important;
+                }
+                div[data-testid="stSidebar"] div[role="radiogroup"] label {
+                    background-color: var(--secondary-background-color);
+                    border: 1px solid var(--border-color);
+                    padding: 12px 16px !important;
+                    border-radius: 8px !important;
+                    margin-bottom: 8px !important;
+                    transition: all 0.2s ease;
+                    width: 100%;
+                    cursor: pointer;
+                }
+                /* Ocultar el círculo de selección por defecto */
+                div[data-testid="stSidebar"] div[role="radiogroup"] label [data-testid="stWidgetSelectionMarker"] {
+                    display: none !important;
+                }
+                /* Estilo cuando el botón está seleccionado (Colores ONPE / Perú) */
+                div[data-testid="stSidebar"] div[role="radiogroup"] [data-checked="true"] label {
+                    background: linear-gradient(90deg, #003C7D 0%, #0B5CAB 100%) !important;
+                    color: white !important;
+                    border-color: #003C7D !important;
+                    box-shadow: 0 4px 6px -1px rgba(0, 60, 125, 0.2);
+                }
+                /* Efecto Hover */
+                div[data-testid="stSidebar"] div[role="radiogroup"] label:hover {
+                    border-color: #003C7D !important;
+                    transform: translateX(3px);
+                }
+            </style>
+            """, unsafe_allow_html=True
+        )
+        
+        options = ["Resumen", "Resultados", "Mapa", "Simulador", "Reportes", "Logs", "Acerca de"]
+        option = st.radio("Menú", options, label_visibility="collapsed")
+        
+        st.markdown("<br><hr style='border-color: var(--border-color);'><br>", unsafe_allow_html=True)
+        st.caption("🇵🇪 Sistema de Control de Actas Oficial · USIL 2026")
  
     render_header(db_connected)
  
