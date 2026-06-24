@@ -6,7 +6,9 @@ import unicodedata
  
 import numpy as np
 import pandas as pd
+# pyrefly: ignore [missing-import]
 import plotly.express as px
+# pyrefly: ignore [missing-import]
 import plotly.graph_objects as go
 import streamlit as st
  
@@ -612,15 +614,33 @@ def make_votes_chart(summary: pd.DataFrame) -> go.Figure:
 def make_map(locations: pd.DataFrame, metrics: dict) -> go.Figure:
     map_df = locations.copy()
 
+    # Blindaje defensivo contra errores de base de datos / columnas faltantes
+    if "total_actas" not in map_df.columns and "actas_totales" in map_df.columns:
+        map_df["total_actas"] = map_df["actas_totales"]
+    elif "total_actas" not in map_df.columns:
+        map_df["total_actas"] = 0
+        
+    for col in ["actas_contabilizadas", "velocidad_actas_hora", "latitude", "longitude"]:
+        if col not in map_df.columns:
+            map_df[col] = 0.0
+
+    # Rellenar nulos de manera segura
+    map_df["total_actas"] = pd.to_numeric(map_df["total_actas"], errors="coerce").fillna(0).astype(int)
+    map_df["actas_contabilizadas"] = pd.to_numeric(map_df["actas_contabilizadas"], errors="coerce").fillna(0).astype(int)
+    map_df["velocidad_actas_hora"] = pd.to_numeric(map_df["velocidad_actas_hora"], errors="coerce").fillna(0.0).astype(float)
+    map_df["latitude"] = pd.to_numeric(map_df["latitude"], errors="coerce").fillna(0.0)
+    map_df["longitude"] = pd.to_numeric(map_df["longitude"], errors="coerce").fillna(0.0)
+
     # Si la BD ya trae estado desde Databricks, usamos ese estado.
     # Si no existe, lo calculamos por velocidad como respaldo. -------- 
     if "estado" not in map_df.columns:
-        threshold = metrics["slow_threshold"]
+        threshold = metrics.get("slow_threshold", 0)
+        avg_speed = metrics.get("avg_speed", 0)
         map_df["estado"] = np.where(
             map_df["velocidad_actas_hora"] < threshold,
             "Retraso crítico",
             np.where(
-                map_df["velocidad_actas_hora"] < metrics["avg_speed"],
+                map_df["velocidad_actas_hora"] < avg_speed,
                 "Avance medio",
                 "Avance alto",
             ),
@@ -634,18 +654,29 @@ def make_map(locations: pd.DataFrame, metrics: dict) -> go.Figure:
         0,
     )
 
-
-    
     color_map = {
         "Avance alto": "#5DBB73",
         "Avance medio": "#F4C64E",
         "Retraso crítico": "#F05A5A",
     }
+    
+    # Previene error de Plotly si el DataFrame está vacío o no tiene datos válidos
+    if map_df.empty:
+        fig = go.Figure()
+        fig.update_layout(
+            mapbox_style="open-street-map",
+            margin=dict(l=0, r=0, t=0, b=0),
+        )
+        return fig
+
+    # Asegura que total_actas no sea <= 0 para evitar errores de Plotly size
+    map_df["total_actas_size"] = map_df["total_actas"].clip(lower=1)
+
     fig = px.scatter_mapbox(
         map_df,
         lat="latitude",
         lon="longitude",
-        size="total_actas",
+        size="total_actas_size",
         color="estado",
         color_discrete_map=color_map,
         hover_name="region",
@@ -928,7 +959,7 @@ def render_mapa(locations: pd.DataFrame, candidates: pd.DataFrame | None = None,
         )
     except TypeError:
         selection = None
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
  
     selected_region = None
     selection_payload = {}
@@ -991,7 +1022,7 @@ def render_mapa(locations: pd.DataFrame, candidates: pd.DataFrame | None = None,
             # Formateo dinámico UX con barra de progreso integrada
             st.dataframe(
                 detail_table, 
-                use_container_width=True, 
+                width="stretch", 
                 hide_index=True,
                 column_config={
                     "Actas totales": st.column_config.NumberColumn(format="%d"),
@@ -1092,7 +1123,7 @@ def page_mapa(locations, candidates, votes):
                 
                 st.dataframe(
                     risk_table, 
-                    use_container_width=True, 
+                    width="stretch", 
                     hide_index=True,
                     column_config={
                         "% Avance": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
@@ -1114,7 +1145,7 @@ def page_mapa(locations, candidates, votes):
                 
                 st.dataframe(
                     what_if_table, 
-                    use_container_width=True, 
+                    width="stretch", 
                     hide_index=True,
                     column_config={
                         "Actas Pendientes": st.column_config.NumberColumn(format="%d"),
@@ -1122,6 +1153,50 @@ def page_mapa(locations, candidates, votes):
                         "Velocidad (Actas/h)": st.column_config.NumberColumn(format="%.1f")
                     }
                 )
+
+    # ======================================================
+    # ANÁLISIS DE REGIONES CRÍTICAS Y MAPA DE PUNTOS
+    # ======================================================
+    st.write("")
+    data = joined_results(candidates, locations, votes)
+    summary = candidate_summary(data)
+    metrics = general_metrics(locations, summary)
+ 
+    st.markdown("## Análisis por región")
+    st.caption("Nivel de avance del conteo y velocidad de procesamiento")
+ 
+    left, right = st.columns([2, 1])
+    with left:
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        fig_map = make_map(locations, metrics)
+        st.plotly_chart(fig_map, width="stretch")
+        st.markdown("</div>", unsafe_allow_html=True)
+ 
+    with right:
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.markdown("### Nivel de avance")
+        st.write("🟢 Avance alto")
+        st.write("🟡 Avance medio")
+        st.write("🔴 Retraso crítico")
+        st.divider()
+        st.markdown("### Regiones críticas")
+        
+        # Filtrado seguro contra KeyErrors de base de datos
+        if "velocidad_actas_hora" in locations.columns:
+            critical = locations[locations["velocidad_actas_hora"] < metrics.get("slow_threshold", 0)].copy()
+        else:
+            critical = pd.DataFrame()
+            
+        if critical.empty or "velocidad_actas_hora" not in critical.columns:
+            st.success("No hay regiones críticas con el umbral actual.")
+        else:
+            avg_speed = max(metrics.get("avg_speed", 1), 1)
+            critical["retraso_estimado"] = (
+                100 - critical["velocidad_actas_hora"] / avg_speed * 100
+            ).clip(lower=0)
+            for _, row in critical.sort_values("retraso_estimado", ascending=False).iterrows():
+                st.write(f"**{row['region']}** — {row['retraso_estimado']:.0f}% bajo el promedio")
+        st.markdown("</div>", unsafe_allow_html=True)
 
 def page_resumen(candidates, locations, votes, db_connected):
     filtered_locations = apply_filters(locations)
@@ -1707,80 +1782,7 @@ def page_resultados(candidates, locations, votes):
             )
  
  
-def page_mapa(locations, candidates, votes):
-    st.markdown("## Analisis territorial del conteo")
-    st.caption("Mapa coropletico de los 10 departamentos con mayor carga electoral")
 
-    if locations.empty or candidates.empty or votes.empty:
-        st.warning("No hay datos disponibles para mostrar el mapa. Verifica la conexión a Supabase.")
-        return
-
-    map_df = render_mapa(locations, candidates, votes)
-    if map_df.empty:
-        return
- 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Avance promedio", f"{map_df['avance_pct'].mean():.1f}%")
-    c2.metric("Velocidad total", f"{map_df['velocidad_actas_hora'].sum():,.0f}", "actas/hora")
-    c3.metric("Bajo promedio", str(int(map_df["anomalia_score"].sum())))
-    c4.metric("Alta pendiente", str(int(map_df["alta_pendiente"].sum())))
- 
-    left, right = st.columns([1.15, 1])
-    with left:
-        st.markdown("### Departamentos con menor rendimiento")
-        risk = map_df[map_df["bajo_promedio"] | map_df["menor_rendimiento"]].copy()
-        if risk.empty:
-            st.success("No hay departamentos bajo el promedio actual.")
-        else:
-            risk["brecha_avance"] = (map_df["avance_pct"].mean() - risk["avance_pct"]).clip(lower=0)
-            risk_table = risk[
-                ["region_map", "avance_pct", "velocidad_actas_hora", "pendiente_pct", "brecha_avance", "estado_analitico"]
-            ].sort_values(["brecha_avance", "pendiente_pct"], ascending=False)
-            risk_table.columns = ["Departamento", "% avance", "Actas/hora", "% pendiente", "Brecha avance", "Estado"]
-            st.dataframe(risk_table, width="stretch", hide_index=True)
- 
-    with right:
-        st.markdown("### Insumos para simulacion")
-        what_if = map_df[map_df["alta_pendiente"]].copy()
-        if what_if.empty:
-            st.info("No hay departamentos con carga pendiente alta en el corte actual.")
-        else:
-            what_if_table = what_if[["region_map", "actas_pendientes", "pendiente_pct", "velocidad_actas_hora"]]
-            what_if_table.columns = ["Departamento", "Actas pendientes", "% pendiente", "Actas/hora"]
-            st.dataframe(what_if_table, width="stretch", hide_index=True)
-    return
- 
-    data = joined_results(candidates, locations, votes)
-    summary = candidate_summary(data)
-    metrics = general_metrics(locations, summary)
- 
-    st.markdown("## Análisis por región")
-    st.caption("Nivel de avance del conteo y velocidad de procesamiento")
- 
-    left, right = st.columns([2, 1])
-    with left:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.plotly_chart(make_map(locations, metrics), width="stretch")
-        st.markdown("</div>", unsafe_allow_html=True)
- 
-    with right:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown("### Nivel de avance")
-        st.write("🟢 Avance alto")
-        st.write("🟡 Avance medio")
-        st.write("🔴 Retraso crítico")
-        st.divider()
-        st.markdown("### Regiones críticas")
-        critical = locations[locations["velocidad_actas_hora"] < metrics["slow_threshold"]].copy()
-        if critical.empty:
-            st.success("No hay regiones críticas con el umbral actual.")
-        else:
-            critical["retraso_estimado"] = (
-                100 - critical["velocidad_actas_hora"] / max(metrics["avg_speed"], 1) * 100
-            ).clip(lower=0)
-            for _, row in critical.sort_values("retraso_estimado", ascending=False).iterrows():
-                st.write(f"**{row['region']}** — {row['retraso_estimado']:.0f}% bajo el promedio")
-        st.markdown("</div>", unsafe_allow_html=True)
 
 
 def _fit_array(values: list[float], size: int) -> np.ndarray:
