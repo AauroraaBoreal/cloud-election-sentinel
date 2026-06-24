@@ -405,18 +405,35 @@ def candidate_summary(data: pd.DataFrame) -> pd.DataFrame:
     summary["percentage"] = np.where(total_votes > 0, summary["valid_votes"] / total_votes * 100, 0)
     return summary
  
- 
 def general_metrics(locations: pd.DataFrame, summary: pd.DataFrame) -> dict:
-    total_actas = int(locations["total_actas"].sum())
-    counted = int(locations["actas_contabilizadas"].sum())
-    pending = int(locations["actas_pendientes"].sum())
+    # --- BLINDAJE DEFENSIVO ANTI-KEYERROR (Mayerly UX Fix) ---
+    
+    # 1. Total de Actas (Seguro)
+    if "total_actas" in locations.columns:
+        total_actas = int(locations["total_actas"].sum())
+    elif "actas_totales" in locations.columns:
+        total_actas = int(locations["actas_totales"].sum())
+    else:
+        total_actas = 0
+
+    # 2. Extracción segura con valores por defecto (Si no existen, asume 0)
+    counted = int(locations["actas_contabilizadas"].sum()) if "actas_contabilizadas" in locations.columns else 0
+    pending = int(locations["actas_pendientes"].sum()) if "actas_pendientes" in locations.columns else 0
+    
+    # 3. Progreso
     progress = counted / total_actas * 100 if total_actas else 0
-    avg_speed = float(locations["velocidad_actas_hora"].mean()) if not locations.empty else 0
-    global_speed = float(locations["velocidad_actas_hora"].sum()) if not locations.empty else 0
+    
+    # 4. Velocidades y Umbrales Críticos de forma segura
+    has_speed = "velocidad_actas_hora" in locations.columns and not locations.empty
+    
+    avg_speed = float(locations["velocidad_actas_hora"].mean()) if has_speed else 0
+    global_speed = float(locations["velocidad_actas_hora"].sum()) if has_speed else 0
     slow_threshold = avg_speed * 0.70
-    critical = int((locations["velocidad_actas_hora"] < slow_threshold).sum()) if avg_speed > 0 else 0
+    
+    critical = int((locations["velocidad_actas_hora"] < slow_threshold).sum()) if has_speed and avg_speed > 0 else 0
  
-    if len(summary) >= 2:
+    # 5. Cálculo de estabilidad electoral basado en la diferencia (ONPE style)
+    if len(summary) >= 2 and "percentage" in summary.columns:
         diff = float(summary.iloc[0]["percentage"] - summary.iloc[1]["percentage"])
     else:
         diff = 0
@@ -433,7 +450,6 @@ def general_metrics(locations: pd.DataFrame, summary: pd.DataFrame) -> dict:
         "stability": stability,
         "slow_threshold": slow_threshold,
     }
- 
  
 def format_int(value: float) -> str:
     return f"{int(round(value)):,}".replace(",", " ").replace(" ", ",")
@@ -1107,7 +1123,7 @@ def page_mapa(locations, candidates, votes):
                     }
                 )
 
-def page_resumen(candidates, locations, votes):
+def page_resumen(candidates, locations, votes, db_connected):
     filtered_locations = apply_filters(locations)
     data = joined_results(candidates, filtered_locations, votes)
     summary = candidate_summary(data)
@@ -2215,7 +2231,7 @@ def main():
     render_header(db_connected)
  
     if option == "Resumen":
-        page_resumen(candidates, locations, votes) # <- Aquí agregamos db_connected
+        page_resumen(candidates, locations, votes, db_connected) # <- Aquí agregamos db_connected
     elif option == "Resultados":
         page_resultados(candidates, locations, votes)
     elif option == "Mapa":
