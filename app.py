@@ -953,17 +953,19 @@ def prepare_mapa_dataframe(
     grouped["region_map"] = pd.Categorical(grouped["region_map"], TOP_ELECTORAL_DEPARTMENTS, ordered=True)
     return grouped.sort_values("region_map").reset_index(drop=True)
 
-
 def make_choropleth_map(map_df: pd.DataFrame, metric: str) -> go.Figure:
+    # Paleta ONPE/Perú adaptable a Fondos Claros y Oscuros
     metric_config = {
-        "% de avance": ("avance_pct", "% avance", [[0, "#F59E0B"], [0.5, "#3B82F6"], [1, "#10B981"]], [0, 100]),
-        "Velocidad de procesamiento": ("velocidad_actas_hora", "Actas/hora", "Blues", None),
-        "Anomalias": ("anomalia_score", "Anomalia", [[0, "#D1FAE5"], [0.49, "#D1FAE5"], [0.5, "#FEE2E2"], [1, "#EF4444"]], [0, 1]),
+        "% de avance": ("avance_pct", "% Avance", [[0, "#E5E7EB"], [0.3, "#FCA5A5"], [0.7, "#FEF08A"], [1, "#BBF7D0"]], [0, 100]),
+        "Velocidad de procesamiento": ("velocidad_actas_hora", "Actas/h", [[0, "#EFF6FF"], [1, "#1E3A8A"]], None),
+        "Anomalias": ("anomalia_score", "Alerta", [[0, "#F3F4F6"], [0.49, "#F3F4F6"], [0.5, "#FEE2E2"], [1, "#EF4444"]], [0, 1]),
     }
     column, title, colorscale, value_range = metric_config[metric]
     zmin, zmax = value_range if value_range else (None, None)
  
     fig = go.Figure()
+    
+    # Única capa base oficial: Mapa Poligonal de Departamentos (Sin duplicados ni solapamientos)
     fig.add_trace(
         go.Choroplethmapbox(
             geojson=DEPARTMENT_GEOJSON,
@@ -973,14 +975,14 @@ def make_choropleth_map(map_df: pd.DataFrame, metric: str) -> go.Figure:
             colorscale=colorscale,
             zmin=zmin,
             zmax=zmax,
-            marker_line_width=1.5,
-            marker_line_color="#FFFFFF",
+            marker_line_width=1.0,
+            marker_line_color="var(--background-color)", # Línea de frontera adaptativa al tema claro/oscuro
             colorbar=dict(
-                title=dict(text=f"<b>{title}</b>", font=dict(size=12)),
-                thickness=18, 
-                len=0.8,
-                bgcolor="rgba(255,255,255,0.8)",
-                x=0.98
+                title=dict(text=f"<b>{title}</b>", font=dict(size=11, color="gray")),
+                thickness=15, 
+                len=0.6,
+                x=0.98,
+                y=0.5
             ),
             customdata=np.stack(
                 [
@@ -989,59 +991,49 @@ def make_choropleth_map(map_df: pd.DataFrame, metric: str) -> go.Figure:
                     map_df["velocidad_actas_hora"],
                     map_df["actas_pendientes"],
                     map_df["pendiente_pct"],
-                    map_df["estado_analitico"],
-                    map_df["votos_principales"],
+                    map_df["estado_analitico"]
                 ],
                 axis=-1,
             ),
             hovertemplate=(
-                "<b>📍 Región: %{customdata[0]}</b><br>"
-                "<span style='color:#10B981'>● Avance:</span> <b>%{customdata[1]:.1f}%</b><br>"
-                "<span style='color:#3B82F6'>● Velocidad:</span> <b>%{customdata[2]:,.1f} actas/h</b><br>"
-                "<span style='color:#EF4444'>● Pendientes:</span> <b>%{customdata[3]:,} (%{customdata[4]:.1f}%)</b><br>"
-                "-------------------------<br>"
-                "<b>Status: %{customdata[5]}</b><br><br>"
-                "<b>🗳️ VOTOS PRINCIPALES:</b><br>%{customdata[6]}"
+                "<b>📍 Región: %{customdata[0]}</b><br><br>"
+                "📊 Avance: <b>%{customdata[1]:.1f}%</b><br>"
+                "⚡ Velocidad: <b>%{customdata[2]:,.1f} actas/h</b><br>"
+                "⚠️ Pendientes: <b>%{customdata[3]:,} (%{customdata[4]:.1f}%)</b><br>"
+                "📋 Estado: <b>%{customdata[5]}</b>"
                 "<extra></extra>"
             ),
         )
     )
  
+    # Resaltado limpio de bordes para alertas críticas (En lugar de figuras sólidas encima)
     anomaly_df = map_df[map_df["bajo_promedio"] | map_df["menor_rendimiento"]]
     if not anomaly_df.empty:
         fig.add_trace(
             go.Choroplethmapbox(
                 geojson=DEPARTMENT_GEOJSON,
                 locations=anomaly_df["region_map"].astype(str),
-                z=np.zeros(len(anomaly_df)),
+                z=np.ones(len(anomaly_df)),
                 featureidkey="id",
-                colorscale=[[0, "rgba(239, 68, 68, 0.1)"], [1, "rgba(239, 68, 68, 0.1)"]],
+                colorscale=[[0, "rgba(220, 38, 38, 0.05)"], [1, "rgba(220, 38, 38, 0.05)"]], # Fondo casi invisible, solo resalta bordes
                 showscale=False,
-                marker_line_width=3.5,
-                marker_line_color="#EF4444",
+                marker_line_width=2.5,
+                marker_line_color="#DC2626", # Borde Rojo Alerta Institucional
                 hoverinfo="skip",
             )
         )
  
-    fig.add_trace(
-        go.Scattermapbox(
-            lat=map_df["latitude"],
-            lon=map_df["longitude"],
-            mode="markers+text",
-            marker=dict(size=10, color="#003C7D"),
-            text=map_df["region_map"].astype(str),
-            textfont=dict(size=11, color="#1F2937", family="Arial-Bold"),
-            textposition="top center",
-            hoverinfo="skip",
-            showlegend=False,
-        )
-    )
+    # Configuración del contenedor del mapa
     fig.update_layout(
-        height=600,
-        mapbox=dict(style="carto-positron", center={"lat": -9.5, "lon": -75.0}, zoom=4.5),
+        height=550,
+        mapbox=dict(
+            style="carto-positron", # Fondo de mapa limpio y minimalista gris claro
+            center={"lat": -9.19, "lon": -75.01}, # Centrado geográfico exacto de Perú
+            zoom=4.6
+        ),
         margin=dict(l=0, r=0, t=0, b=0),
-        paper_bgcolor="white",
-        font=dict(color=TEXT_DARK),
+        paper_bgcolor="rgba(0,0,0,0)", # Fondo transparente para integrarse con Temas Claro/Oscuro
+        plot_bgcolor="rgba(0,0,0,0)",
         showlegend=False,
     )
     return fig
